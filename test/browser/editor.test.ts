@@ -29,6 +29,16 @@ const query = <T extends HTMLElement = HTMLElement>(editor: SonosRadioCardEditor
 
 const lastChange = (changes: SonosRadioCardConfig[]) => changes[changes.length - 1];
 
+// <ha-form> is provided by Home Assistant; tests emit its value-changed event.
+const changeForm = (
+  editor: SonosRadioCardEditor,
+  selector: string,
+  value: Record<string, unknown>,
+) =>
+  query(editor, selector)!.dispatchEvent(
+    new CustomEvent("value-changed", { detail: { value }, bubbles: true, composed: true }),
+  );
+
 const originalFetch = window.fetch;
 
 afterEach(() => {
@@ -62,20 +72,48 @@ describe("sonos-radio-card-editor", () => {
       hass,
     );
 
-    await waitUntil(() => query(editor, ".favorite-select"));
-    const select = query<HTMLElement & { options: { value: string; label: string }[] }>(
+    await waitUntil(() => query(editor, ".favorite-form"));
+    const form = query<HTMLElement & { schema: { selector: { select: { options: unknown } } }[] }>(
       editor,
-      ".favorite-select",
+      ".favorite-form",
     )!;
-    expect(select.options).to.deep.equal([{ value: "FV:2/12", label: "Example FM" }]);
+    expect(form.schema[0].selector.select.options).to.deep.equal([
+      { value: "FV:2/12", label: "Example FM" },
+    ]);
 
-    select.dispatchEvent(new CustomEvent("selected", { detail: { value: "FV:2/12" } }));
+    changeForm(editor, ".favorite-form", { favorite: "FV:2/12" });
     expect(lastChange(changes).stations[0]).to.deep.equal({
       name: "Example FM",
       media_content_id: "FV:2/12",
       media_content_type: "favorite_item_id",
       logo: "https://images.example.com/fm.png",
     });
+  });
+
+  it("switches the station type and edits the stream URL", async () => {
+    const hass = mockHass([entity("media_player.kitchen", "idle")], {
+      callWS: () => Promise.resolve({ children: [] }),
+    });
+    const { editor, changes } = await mount(
+      baseConfig([{ name: "Example FM", media_content_id: "", media_content_type: "music" }]),
+      hass,
+    );
+    let outerEvents = 0;
+    document.body.addEventListener("value-changed", () => outerEvents++);
+
+    changeForm(editor, ".source-form", { media_content_id: "https://stream.example.com/a.mp3" });
+    await editor.updateComplete;
+    expect(lastChange(changes).stations[0].media_content_id).to.equal(
+      "https://stream.example.com/a.mp3",
+    );
+    const source = query<HTMLElement & { data: Record<string, unknown> }>(editor, ".source-form")!;
+    expect(source.data).to.deep.equal({ media_content_id: "https://stream.example.com/a.mp3" });
+
+    changeForm(editor, ".station-form", { name: "Example FM", media_content_type: "favorite_item_id" });
+    await editor.updateComplete;
+    expect(lastChange(changes).stations[0].media_content_type).to.equal("favorite_item_id");
+    await waitUntil(() => query(editor, ".reload-favorites"));
+    expect(outerEvents).to.equal(0);
   });
 
   it("adds a station from the Radio Browser search", async () => {
@@ -97,10 +135,10 @@ describe("sonos-radio-card-editor", () => {
     };
     const { editor, changes } = await mount(baseConfig([]), mockHass([]));
 
-    const field = query<HTMLElement & { value: string }>(editor, ".search ha-textfield")!;
-    field.value = "jazz";
-    field.dispatchEvent(new Event("input"));
-    field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter" }));
+    changeForm(editor, ".search-form", { query: "jazz" });
+    query(editor, ".search-form")!.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "Enter", bubbles: true, composed: true }),
+    );
 
     await waitUntil(() => query(editor, ".add-result"));
     expect(requests[0]).to.contain("name=jazz");

@@ -771,22 +771,39 @@ const searchRadioBrowser = async (query, fetchFn = (input, init) => fetch(input,
 };
 
 const FAVORITE_TYPE = "favorite_item_id";
+const MEDIA_PLAYER = { entity: { filter: { domain: "media_player" } } };
+// All inputs are rendered through <ha-form> selectors. Home Assistant loads
+// and maintains these fields itself, while internal elements such as
+// <ha-textfield> or <ha-select> change between releases.
 const GENERAL_SCHEMA = [
+    { name: "title", selector: { text: {} } },
+    { name: "master_entity", selector: MEDIA_PLAYER },
+];
+const SPEAKER_SCHEMA = [
+    { name: "entity", required: true, selector: MEDIA_PLAYER },
     {
-        name: "title",
-        selector: {
-            text: {},
-        },
-    },
-    {
-        name: "master_entity",
-        selector: {
-            entity: {
-                domain: ["media_player"],
-            },
-        },
+        name: "",
+        type: "grid",
+        schema: [
+            { name: "name", selector: { text: {} } },
+            { name: "icon", selector: { icon: {} } },
+        ],
     },
 ];
+const SOURCE_SCHEMA = [
+    { name: "media_content_id", required: true, selector: { text: {} } },
+];
+const LOGO_SCHEMA = [{ name: "logo", selector: { text: {} } }];
+const SEARCH_SCHEMA = [
+    { name: "query", selector: { text: { type: "search" } } },
+];
+const formValue = (event) => {
+    // Each sub form is handled here; the card editor only needs config-changed.
+    event.stopPropagation();
+    const value = event.detail?.value;
+    return value && typeof value === "object" ? value : {};
+};
+const asString = (value) => (typeof value === "string" ? value : "");
 class SonosRadioCardEditor extends i$1 {
     constructor() {
         super(...arguments);
@@ -796,14 +813,33 @@ class SonosRadioCardEditor extends i$1 {
         this._searchState = "idle";
         this._searchResults = [];
         this._searchRun = 0;
-        this._computeLabel = (schema) => schema.name === "title"
-            ? this._t("editor.title")
-            : schema.name === "master_entity"
-                ? this._t("editor.master")
-                : schema.name;
+        this._computeLabel = (schema) => {
+            const key = {
+                title: "editor.title",
+                master_entity: "editor.master",
+                entity: "editor.speaker_entity",
+                icon: "editor.icon",
+                media_content_type: "editor.content_type",
+                media_content_id: "editor.content_id",
+                logo: "editor.logo",
+                favorite: "editor.favorite",
+                query: "editor.search_label",
+            }[schema.name];
+            return key ? this._t(key) : schema.name;
+        };
+        this._speakerLabel = (schema) => schema.name === "name"
+            ? this._t("editor.display_name")
+            : this._computeLabel(schema);
+        this._stationLabel = (schema) => schema.name === "name"
+            ? this._t("editor.station_name")
+            : this._computeLabel(schema);
         this._computeHelper = (schema) => schema.name === "master_entity"
             ? this._t("editor.master_helper")
-            : undefined;
+            : schema.name === "media_content_id"
+                ? this._t("editor.content_id_placeholder")
+                : schema.name === "logo"
+                    ? this._t("editor.logo_placeholder")
+                    : undefined;
     }
     static { this.properties = {
         _config: { state: true },
@@ -861,12 +897,6 @@ class SonosRadioCardEditor extends i$1 {
     .with-action > :first-child {
       flex: 1;
       min-width: 0;
-    }
-
-    .fields {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 16px;
     }
 
     .helper {
@@ -962,12 +992,6 @@ class SonosRadioCardEditor extends i$1 {
       text-align: left;
       cursor: pointer;
     }
-
-    @media (max-width: 600px) {
-      .fields {
-        grid-template-columns: minmax(0, 1fr);
-      }
-    }
   `; }
     setConfig(config) {
         this._config = {
@@ -998,17 +1022,94 @@ class SonosRadioCardEditor extends i$1 {
             void this._loadFavorites();
         }
     }
+    _stationSchema() {
+        const language = languageOf(this._hass);
+        if (!this._stationSchemaCache || this._stationSchemaCache.language !== language) {
+            const t = this._t;
+            this._stationSchemaCache = {
+                language,
+                schema: [
+                    { name: "name", required: true, selector: { text: {} } },
+                    {
+                        name: "media_content_type",
+                        required: true,
+                        selector: {
+                            select: {
+                                mode: "list",
+                                options: [
+                                    { value: "music", label: t("editor.type_music") },
+                                    { value: FAVORITE_TYPE, label: t("editor.type_favorite") },
+                                ],
+                            },
+                        },
+                    },
+                ],
+            };
+        }
+        return this._stationSchemaCache.schema;
+    }
+    _favoriteSchema() {
+        if (!this._favoriteSchemaCache || this._favoriteSchemaCache.favorites !== this._favorites) {
+            this._favoriteSchemaCache = {
+                favorites: this._favorites,
+                schema: [
+                    {
+                        name: "favorite",
+                        selector: {
+                            select: {
+                                mode: "dropdown",
+                                options: this._favorites.map((favorite) => ({
+                                    value: favorite.id,
+                                    label: favorite.title,
+                                })),
+                            },
+                        },
+                    },
+                ],
+            };
+        }
+        return this._favoriteSchemaCache.schema;
+    }
     _generalChanged(event) {
         if (!this._config) {
             return;
         }
-        const { title, master_entity } = event.detail.value;
+        const { title, master_entity } = formValue(event);
         const config = {
             ...this._config,
             title: this._optionalString(title),
             master_entity: this._optionalString(master_entity),
         };
         this._updateConfig(config);
+    }
+    _speakerChanged(index, event) {
+        const value = formValue(event);
+        this._updateSpeaker(index, {
+            entity: asString(value.entity),
+            name: this._optionalString(value.name),
+            icon: this._optionalString(value.icon),
+        });
+    }
+    _stationChanged(index, event) {
+        const station = this._config?.stations[index];
+        if (!station) {
+            return;
+        }
+        const value = formValue(event);
+        this._updateStation(index, {
+            name: asString(value.name),
+            media_content_type: asString(value.media_content_type) || station.media_content_type,
+        });
+    }
+    _sourceChanged(index, event) {
+        this._updateStation(index, {
+            media_content_id: asString(formValue(event).media_content_id),
+        });
+    }
+    _logoChanged(index, event) {
+        this._updateStation(index, {
+            logo: this._optionalString(formValue(event).logo),
+        });
     }
     _updateConfig(config) {
         this._config = config;
@@ -1020,17 +1121,6 @@ class SonosRadioCardEditor extends i$1 {
     }
     _optionalString(value) {
         return typeof value === "string" && value.length > 0 ? value : undefined;
-    }
-    _eventValue(event) {
-        const detail = event instanceof CustomEvent ? event.detail : undefined;
-        const value = detail && typeof detail === "object" && "value" in detail
-            ? detail.value
-            : undefined;
-        if (typeof value === "string") {
-            return value;
-        }
-        const target = event.currentTarget;
-        return typeof target.value === "string" ? target.value : "";
     }
     _updateSpeaker(index, updates) {
         if (!this._config) {
@@ -1293,29 +1383,14 @@ class SonosRadioCardEditor extends i$1 {
             </ha-icon-button>
           </div>
         </div>
-        <ha-entity-picker
+        <ha-form
+          class="speaker-form"
           .hass=${this._hass}
-          .value=${speaker.entity}
-          .includeDomains=${["media_player"]}
-          .label=${t("editor.speaker_entity")}
-          @value-changed=${(event) => this._updateSpeaker(index, { entity: this._eventValue(event) })}
-        ></ha-entity-picker>
-        <div class="fields">
-          <ha-textfield
-            .label=${t("editor.display_name")}
-            .value=${speaker.name ?? ""}
-            @input=${(event) => this._updateSpeaker(index, {
-            name: this._optionalString(this._eventValue(event)),
-        })}
-          ></ha-textfield>
-          <ha-icon-picker
-            .label=${t("editor.icon")}
-            .value=${speaker.icon ?? ""}
-            @value-changed=${(event) => this._updateSpeaker(index, {
-            icon: this._optionalString(this._eventValue(event)),
-        })}
-          ></ha-icon-picker>
-        </div>
+          .data=${{ entity: speaker.entity, name: speaker.name, icon: speaker.icon }}
+          .schema=${SPEAKER_SCHEMA}
+          .computeLabel=${this._speakerLabel}
+          @value-changed=${(event) => this._speakerChanged(index, event)}
+        ></ha-form>
       </div>
     `;
     }
@@ -1352,45 +1427,37 @@ class SonosRadioCardEditor extends i$1 {
             </ha-icon-button>
           </div>
         </div>
-        <div class="fields">
-          <ha-textfield
-            .label=${t("editor.station_name")}
-            .value=${station.name}
-            @input=${(event) => this._updateStation(index, { name: this._eventValue(event) })}
-          ></ha-textfield>
-          <ha-select
-            .label=${t("editor.content_type")}
-            .value=${station.media_content_type}
-            .options=${[
-            { value: "music", label: t("editor.type_music") },
-            { value: FAVORITE_TYPE, label: t("editor.type_favorite") },
-        ]}
-            @selected=${(event) => {
-            const type = this._eventValue(event);
-            if (type && type !== station.media_content_type) {
-                this._updateStation(index, { media_content_type: type });
-            }
+        <ha-form
+          class="station-form"
+          .hass=${this._hass}
+          .data=${{
+            name: station.name,
+            media_content_type: station.media_content_type,
         }}
-          ></ha-select>
-        </div>
+          .schema=${this._stationSchema()}
+          .computeLabel=${this._stationLabel}
+          @value-changed=${(event) => this._stationChanged(index, event)}
+        ></ha-form>
         ${isFavorite ? this._renderFavoritePicker(station, index) : A}
-        <ha-textfield
-          .label=${t("editor.content_id")}
-          .value=${station.media_content_id}
-          .placeholder=${t("editor.content_id_placeholder")}
-          @input=${(event) => this._updateStation(index, {
-            media_content_id: this._eventValue(event),
-        })}
-        ></ha-textfield>
+        <ha-form
+          class="source-form"
+          .hass=${this._hass}
+          .data=${{ media_content_id: station.media_content_id }}
+          .schema=${SOURCE_SCHEMA}
+          .computeLabel=${this._computeLabel}
+          .computeHelper=${this._computeHelper}
+          @value-changed=${(event) => this._sourceChanged(index, event)}
+        ></ha-form>
         <div class="with-action">
-          <ha-textfield
-            .label=${t("editor.logo")}
-            .value=${station.logo ?? ""}
-            .placeholder=${t("editor.logo_placeholder")}
-            @input=${(event) => this._updateStation(index, {
-            logo: this._optionalString(this._eventValue(event)),
-        })}
-          ></ha-textfield>
+          <ha-form
+            class="logo-form"
+            .hass=${this._hass}
+            .data=${{ logo: station.logo }}
+            .schema=${LOGO_SCHEMA}
+            .computeLabel=${this._computeLabel}
+            .computeHelper=${this._computeHelper}
+            @value-changed=${(event) => this._logoChanged(index, event)}
+          ></ha-form>
           <ha-icon-button
             class="browse-logo"
             .label=${t("editor.browse_logo")}
@@ -1424,16 +1491,18 @@ class SonosRadioCardEditor extends i$1 {
       <div class="with-action">
         ${message
             ? b `<div class="helper warning" role="status">${message}</div>`
-            : b `<ha-select
-              class="favorite-select"
-              .label=${t("editor.favorite")}
-              .value=${station.media_content_id}
-              .options=${this._favorites.map((favorite) => ({
-                value: favorite.id,
-                label: favorite.title,
-            }))}
-              @selected=${(event) => this._pickFavorite(index, this._eventValue(event))}
-            ></ha-select>`}
+            : b `<ha-form
+              class="favorite-form"
+              .hass=${this._hass}
+              .data=${{
+                favorite: this._favorites.some((favorite) => favorite.id === station.media_content_id)
+                    ? station.media_content_id
+                    : undefined,
+            }}
+              .schema=${this._favoriteSchema()}
+              .computeLabel=${this._computeLabel}
+              @value-changed=${(event) => this._pickFavorite(index, asString(formValue(event).favorite))}
+            ></ha-form>`}
         <ha-icon-button
           class="reload-favorites"
           .label=${t("editor.favorites_reload")}
@@ -1509,13 +1578,15 @@ class SonosRadioCardEditor extends i$1 {
         return b `
       <div class="section search">
         <h4>${t("editor.search_title")}</h4>
-        <div class="with-action">
-          <ha-textfield
-            .label=${t("editor.search_label")}
-            .value=${this._searchQuery}
-            @input=${(event) => (this._searchQuery = this._eventValue(event))}
-            @keydown=${this._searchKeydown}
-          ></ha-textfield>
+        <div class="with-action" @keydown=${this._searchKeydown}>
+          <ha-form
+            class="search-form"
+            .hass=${this._hass}
+            .data=${{ query: this._searchQuery }}
+            .schema=${SEARCH_SCHEMA}
+            .computeLabel=${this._computeLabel}
+            @value-changed=${(event) => (this._searchQuery = asString(formValue(event).query))}
+          ></ha-form>
           <ha-button
             class="search-button"
             .disabled=${!this._searchQuery.trim() ||

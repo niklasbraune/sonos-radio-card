@@ -14,15 +14,14 @@ import type {
   SonosStationConfig,
 } from "./types.js";
 
-interface GeneralFormValue {
-  title?: unknown;
-  master_entity?: unknown;
-}
+type FormData = Record<string, unknown>;
 
-interface FormValueChangedEvent extends CustomEvent {
-  detail: {
-    value: GeneralFormValue;
-  };
+interface FormSchema {
+  name: string;
+  type?: "grid";
+  required?: boolean;
+  selector?: Record<string, unknown>;
+  schema?: FormSchema[];
 }
 
 type LoadState = "idle" | "loading" | "done" | "error";
@@ -35,22 +34,46 @@ interface MediaBrowserState {
 
 const FAVORITE_TYPE = "favorite_item_id";
 
-const GENERAL_SCHEMA = [
+const MEDIA_PLAYER = { entity: { filter: { domain: "media_player" } } };
+
+// All inputs are rendered through <ha-form> selectors. Home Assistant loads
+// and maintains these fields itself, while internal elements such as
+// <ha-textfield> or <ha-select> change between releases.
+const GENERAL_SCHEMA: FormSchema[] = [
+  { name: "title", selector: { text: {} } },
+  { name: "master_entity", selector: MEDIA_PLAYER },
+];
+
+const SPEAKER_SCHEMA: FormSchema[] = [
+  { name: "entity", required: true, selector: MEDIA_PLAYER },
   {
-    name: "title",
-    selector: {
-      text: {},
-    },
-  },
-  {
-    name: "master_entity",
-    selector: {
-      entity: {
-        domain: ["media_player"],
-      },
-    },
+    name: "",
+    type: "grid",
+    schema: [
+      { name: "name", selector: { text: {} } },
+      { name: "icon", selector: { icon: {} } },
+    ],
   },
 ];
+
+const SOURCE_SCHEMA: FormSchema[] = [
+  { name: "media_content_id", required: true, selector: { text: {} } },
+];
+
+const LOGO_SCHEMA: FormSchema[] = [{ name: "logo", selector: { text: {} } }];
+
+const SEARCH_SCHEMA: FormSchema[] = [
+  { name: "query", selector: { text: { type: "search" } } },
+];
+
+const formValue = (event: Event): FormData => {
+  // Each sub form is handled here; the card editor only needs config-changed.
+  event.stopPropagation();
+  const value: unknown = (event as CustomEvent<{ value?: unknown }>).detail?.value;
+  return value && typeof value === "object" ? (value as FormData) : {};
+};
+
+const asString = (value: unknown): string => (typeof value === "string" ? value : "");
 
 export class SonosRadioCardEditor extends LitElement {
   static properties = {
@@ -110,12 +133,6 @@ export class SonosRadioCardEditor extends LitElement {
     .with-action > :first-child {
       flex: 1;
       min-width: 0;
-    }
-
-    .fields {
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 16px;
     }
 
     .helper {
@@ -211,12 +228,6 @@ export class SonosRadioCardEditor extends LitElement {
       text-align: left;
       cursor: pointer;
     }
-
-    @media (max-width: 600px) {
-      .fields {
-        grid-template-columns: minmax(0, 1fr);
-      }
-    }
   `;
 
   private _config?: SonosRadioCardConfig;
@@ -229,6 +240,8 @@ export class SonosRadioCardEditor extends LitElement {
   private _browser?: MediaBrowserState;
   private _searchRun = 0;
   private _translator?: { language: string | undefined; t: Translate };
+  private _stationSchemaCache?: { language: string | undefined; schema: FormSchema[] };
+  private _favoriteSchemaCache?: { favorites: SonosFavorite[]; schema: FormSchema[] };
 
   setConfig(config: SonosRadioCardConfig): void {
     this._config = {
@@ -268,30 +281,138 @@ export class SonosRadioCardEditor extends LitElement {
     }
   }
 
-  private _computeLabel = (schema: { name: string }): string =>
-    schema.name === "title"
-      ? this._t("editor.title")
-      : schema.name === "master_entity"
-        ? this._t("editor.master")
-        : schema.name;
+  private _computeLabel = (schema: { name: string }): string => {
+    const key = (
+      {
+        title: "editor.title",
+        master_entity: "editor.master",
+        entity: "editor.speaker_entity",
+        icon: "editor.icon",
+        media_content_type: "editor.content_type",
+        media_content_id: "editor.content_id",
+        logo: "editor.logo",
+        favorite: "editor.favorite",
+        query: "editor.search_label",
+      } as const
+    )[schema.name];
+    return key ? this._t(key) : schema.name;
+  };
+
+  private _speakerLabel = (schema: { name: string }): string =>
+    schema.name === "name"
+      ? this._t("editor.display_name")
+      : this._computeLabel(schema);
+
+  private _stationLabel = (schema: { name: string }): string =>
+    schema.name === "name"
+      ? this._t("editor.station_name")
+      : this._computeLabel(schema);
 
   private _computeHelper = (schema: { name: string }): string | undefined =>
     schema.name === "master_entity"
       ? this._t("editor.master_helper")
-      : undefined;
+      : schema.name === "media_content_id"
+        ? this._t("editor.content_id_placeholder")
+        : schema.name === "logo"
+          ? this._t("editor.logo_placeholder")
+          : undefined;
 
-  private _generalChanged(event: FormValueChangedEvent): void {
+  private _stationSchema(): FormSchema[] {
+    const language = languageOf(this._hass);
+    if (!this._stationSchemaCache || this._stationSchemaCache.language !== language) {
+      const t = this._t;
+      this._stationSchemaCache = {
+        language,
+        schema: [
+          { name: "name", required: true, selector: { text: {} } },
+          {
+            name: "media_content_type",
+            required: true,
+            selector: {
+              select: {
+                mode: "list",
+                options: [
+                  { value: "music", label: t("editor.type_music") },
+                  { value: FAVORITE_TYPE, label: t("editor.type_favorite") },
+                ],
+              },
+            },
+          },
+        ],
+      };
+    }
+    return this._stationSchemaCache.schema;
+  }
+
+  private _favoriteSchema(): FormSchema[] {
+    if (!this._favoriteSchemaCache || this._favoriteSchemaCache.favorites !== this._favorites) {
+      this._favoriteSchemaCache = {
+        favorites: this._favorites,
+        schema: [
+          {
+            name: "favorite",
+            selector: {
+              select: {
+                mode: "dropdown",
+                options: this._favorites.map((favorite) => ({
+                  value: favorite.id,
+                  label: favorite.title,
+                })),
+              },
+            },
+          },
+        ],
+      };
+    }
+    return this._favoriteSchemaCache.schema;
+  }
+
+  private _generalChanged(event: Event): void {
     if (!this._config) {
       return;
     }
 
-    const { title, master_entity } = event.detail.value;
+    const { title, master_entity } = formValue(event);
     const config: SonosRadioCardConfig = {
       ...this._config,
       title: this._optionalString(title),
       master_entity: this._optionalString(master_entity),
     };
     this._updateConfig(config);
+  }
+
+  private _speakerChanged(index: number, event: Event): void {
+    const value = formValue(event);
+    this._updateSpeaker(index, {
+      entity: asString(value.entity),
+      name: this._optionalString(value.name),
+      icon: this._optionalString(value.icon),
+    });
+  }
+
+  private _stationChanged(index: number, event: Event): void {
+    const station = this._config?.stations[index];
+    if (!station) {
+      return;
+    }
+    const value = formValue(event);
+    this._updateStation(index, {
+      name: asString(value.name),
+      media_content_type:
+        asString(value.media_content_type) || station.media_content_type,
+    });
+  }
+
+  private _sourceChanged(index: number, event: Event): void {
+    this._updateStation(index, {
+      media_content_id: asString(formValue(event).media_content_id),
+    });
+  }
+
+  private _logoChanged(index: number, event: Event): void {
+    this._updateStation(index, {
+      logo: this._optionalString(formValue(event).logo),
+    });
   }
 
   private _updateConfig(config: SonosRadioCardConfig): void {
@@ -307,20 +428,6 @@ export class SonosRadioCardEditor extends LitElement {
 
   private _optionalString(value: unknown): string | undefined {
     return typeof value === "string" && value.length > 0 ? value : undefined;
-  }
-
-  private _eventValue(event: Event): string {
-    const detail: unknown = event instanceof CustomEvent ? event.detail : undefined;
-    const value =
-      detail && typeof detail === "object" && "value" in detail
-        ? detail.value
-        : undefined;
-    if (typeof value === "string") {
-      return value;
-    }
-
-    const target = event.currentTarget as HTMLElement & { value?: unknown };
-    return typeof target.value === "string" ? target.value : "";
   }
 
   private _updateSpeaker(
@@ -632,32 +739,14 @@ export class SonosRadioCardEditor extends LitElement {
             </ha-icon-button>
           </div>
         </div>
-        <ha-entity-picker
+        <ha-form
+          class="speaker-form"
           .hass=${this._hass}
-          .value=${speaker.entity}
-          .includeDomains=${["media_player"]}
-          .label=${t("editor.speaker_entity")}
-          @value-changed=${(event: Event) =>
-            this._updateSpeaker(index, { entity: this._eventValue(event) })}
-        ></ha-entity-picker>
-        <div class="fields">
-          <ha-textfield
-            .label=${t("editor.display_name")}
-            .value=${speaker.name ?? ""}
-            @input=${(event: Event) =>
-              this._updateSpeaker(index, {
-                name: this._optionalString(this._eventValue(event)),
-              })}
-          ></ha-textfield>
-          <ha-icon-picker
-            .label=${t("editor.icon")}
-            .value=${speaker.icon ?? ""}
-            @value-changed=${(event: Event) =>
-              this._updateSpeaker(index, {
-                icon: this._optionalString(this._eventValue(event)),
-              })}
-          ></ha-icon-picker>
-        </div>
+          .data=${{ entity: speaker.entity, name: speaker.name, icon: speaker.icon }}
+          .schema=${SPEAKER_SCHEMA}
+          .computeLabel=${this._speakerLabel}
+          @value-changed=${(event: Event) => this._speakerChanged(index, event)}
+        ></ha-form>
       </div>
     `;
   }
@@ -700,48 +789,37 @@ export class SonosRadioCardEditor extends LitElement {
             </ha-icon-button>
           </div>
         </div>
-        <div class="fields">
-          <ha-textfield
-            .label=${t("editor.station_name")}
-            .value=${station.name}
-            @input=${(event: Event) =>
-              this._updateStation(index, { name: this._eventValue(event) })}
-          ></ha-textfield>
-          <ha-select
-            .label=${t("editor.content_type")}
-            .value=${station.media_content_type}
-            .options=${[
-              { value: "music", label: t("editor.type_music") },
-              { value: FAVORITE_TYPE, label: t("editor.type_favorite") },
-            ]}
-            @selected=${(event: Event) => {
-              const type = this._eventValue(event);
-              if (type && type !== station.media_content_type) {
-                this._updateStation(index, { media_content_type: type });
-              }
-            }}
-          ></ha-select>
-        </div>
+        <ha-form
+          class="station-form"
+          .hass=${this._hass}
+          .data=${{
+            name: station.name,
+            media_content_type: station.media_content_type,
+          }}
+          .schema=${this._stationSchema()}
+          .computeLabel=${this._stationLabel}
+          @value-changed=${(event: Event) => this._stationChanged(index, event)}
+        ></ha-form>
         ${isFavorite ? this._renderFavoritePicker(station, index) : nothing}
-        <ha-textfield
-          .label=${t("editor.content_id")}
-          .value=${station.media_content_id}
-          .placeholder=${t("editor.content_id_placeholder")}
-          @input=${(event: Event) =>
-            this._updateStation(index, {
-              media_content_id: this._eventValue(event),
-            })}
-        ></ha-textfield>
+        <ha-form
+          class="source-form"
+          .hass=${this._hass}
+          .data=${{ media_content_id: station.media_content_id }}
+          .schema=${SOURCE_SCHEMA}
+          .computeLabel=${this._computeLabel}
+          .computeHelper=${this._computeHelper}
+          @value-changed=${(event: Event) => this._sourceChanged(index, event)}
+        ></ha-form>
         <div class="with-action">
-          <ha-textfield
-            .label=${t("editor.logo")}
-            .value=${station.logo ?? ""}
-            .placeholder=${t("editor.logo_placeholder")}
-            @input=${(event: Event) =>
-              this._updateStation(index, {
-                logo: this._optionalString(this._eventValue(event)),
-              })}
-          ></ha-textfield>
+          <ha-form
+            class="logo-form"
+            .hass=${this._hass}
+            .data=${{ logo: station.logo }}
+            .schema=${LOGO_SCHEMA}
+            .computeLabel=${this._computeLabel}
+            .computeHelper=${this._computeHelper}
+            @value-changed=${(event: Event) => this._logoChanged(index, event)}
+          ></ha-form>
           <ha-icon-button
             class="browse-logo"
             .label=${t("editor.browse_logo")}
@@ -778,17 +856,21 @@ export class SonosRadioCardEditor extends LitElement {
       <div class="with-action">
         ${message
           ? html`<div class="helper warning" role="status">${message}</div>`
-          : html`<ha-select
-              class="favorite-select"
-              .label=${t("editor.favorite")}
-              .value=${station.media_content_id}
-              .options=${this._favorites.map((favorite) => ({
-                value: favorite.id,
-                label: favorite.title,
-              }))}
-              @selected=${(event: Event) =>
-                this._pickFavorite(index, this._eventValue(event))}
-            ></ha-select>`}
+          : html`<ha-form
+              class="favorite-form"
+              .hass=${this._hass}
+              .data=${{
+                favorite: this._favorites.some(
+                  (favorite) => favorite.id === station.media_content_id,
+                )
+                  ? station.media_content_id
+                  : undefined,
+              }}
+              .schema=${this._favoriteSchema()}
+              .computeLabel=${this._computeLabel}
+              @value-changed=${(event: Event) =>
+                this._pickFavorite(index, asString(formValue(event).favorite))}
+            ></ha-form>`}
         <ha-icon-button
           class="reload-favorites"
           .label=${t("editor.favorites_reload")}
@@ -875,14 +957,16 @@ export class SonosRadioCardEditor extends LitElement {
     return html`
       <div class="section search">
         <h4>${t("editor.search_title")}</h4>
-        <div class="with-action">
-          <ha-textfield
-            .label=${t("editor.search_label")}
-            .value=${this._searchQuery}
-            @input=${(event: Event) =>
-              (this._searchQuery = this._eventValue(event))}
-            @keydown=${this._searchKeydown}
-          ></ha-textfield>
+        <div class="with-action" @keydown=${this._searchKeydown}>
+          <ha-form
+            class="search-form"
+            .hass=${this._hass}
+            .data=${{ query: this._searchQuery }}
+            .schema=${SEARCH_SCHEMA}
+            .computeLabel=${this._computeLabel}
+            @value-changed=${(event: Event) =>
+              (this._searchQuery = asString(formValue(event).query))}
+          ></ha-form>
           <ha-button
             class="search-button"
             .disabled=${!this._searchQuery.trim() ||
