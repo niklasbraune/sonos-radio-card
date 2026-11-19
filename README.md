@@ -16,17 +16,18 @@ through the visual card editor; no extra scripts, helpers or YAML are needed.
   `media_title`.
 - **One-tap playback** – tapping a tile calls `media_player.play_media` on the
   current group coordinator, so existing Sonos groups stay intact.
-- **Speaker choice** – a “Play on” chip row above the stations lets you pick
-  which configured speaker (or existing group) a station starts on, before
-  playback begins.
-- **Control bar** – now-playing info, one large play/stop button, a
-  group volume slider (keeps per-room differences) and a **Multiroom** button.
+- **Speaker choice** – a chip row above the stations lets you pick which
+  configured speaker (or existing group) a station starts on, before playback
+  begins.
+- **Control bar** – now-playing info with the **Multiroom** button next to it,
+  and one large play/stop button next to the group volume slider (keeps
+  per-room differences).
 - **Group speakers drawer** – slides in from the right and closes by tapping
   outside, the close button, Escape or swiping right. It shows the active
   group (for example “Sonos group: Living Room & Kitchen”), a toggle per room
   (`media_player.join` / `media_player.unjoin`) and a per-room volume slider
   with percentage (`media_player.volume_set`).
-- **Settings panel** – a second side panel (tune button next to *Multiroom*)
+- **Settings panel** – a second side panel (small tune button in the top-right corner)
   for quiet hours with a start volume, a maximum volume and shuffle for
   Sonos favorite playlists. See [Settings panel](#settings-panel).
 - **Seamless master handoff** – removing the group master hands the group to
@@ -260,7 +261,7 @@ If a logo is missing or fails to load, a radio icon is shown instead.
 - The **group coordinator** is the first entry of the `group_members`
   attribute. Stations are always started on the coordinator, so all grouped
   rooms play along.
-- The **Play on** chips list every configured speaker that is not part of
+- The speaker chips above the stations list every configured speaker that is not part of
   another group, plus one chip per existing group. The chip row is hidden when
   there is only one choice. The default selection is `master_entity` or the
   auto-detected coordinator; picking a chip changes the target until the card
@@ -276,7 +277,7 @@ If a logo is missing or fails to load, a radio icon is shown instead.
 
 ## Settings panel
 
-The tune button (<code>mdi:tune-variant</code>) next to **Multiroom** opens a
+The small tune button (<code>mdi:tune-variant</code>) in the top-right corner of the card opens a
 settings panel that slides in like the group drawer. Changes are saved
 immediately, no YAML or dashboard edit mode is needed.
 

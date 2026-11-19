@@ -1047,15 +1047,18 @@ export class SonosRadioCard extends LitElement {
     return html`
       <ha-card class=${this._drawerOpen ? "drawer-open" : ""}>
         <div class="content" ?inert=${this._drawerOpen}>
-          ${this._config.title
-            ? html`<h1 class="card-header">${this._config.title}</h1>`
-            : nothing}
+          <div class="header">
+            ${this._config.title
+              ? html`<h1 class="card-header">${this._config.title}</h1>`
+              : this._renderTargets()}
+            ${this._renderSettingsButton()}
+          </div>
           ${notices.length > 0
             ? html`<div class="notices">
                 ${notices.map((notice) => this._renderNotice(notice))}
               </div>`
             : nothing}
-          ${this._renderTargets()}
+          ${this._config.title ? this._renderTargets() : nothing}
           ${this._renderStations(activeIndex, available)}
           ${this._renderControls(coordinator, activeIndex, available)}
           ${this._toast ? this._renderNotice(this._toast, true) : nothing}
@@ -1096,12 +1099,7 @@ export class SonosRadioCard extends LitElement {
       return nothing;
     }
     return html`
-      <div
-        class="targets"
-        role="group"
-        aria-label=${this._t("card.play_on")}
-      >
-        <span class="targets-label">${this._t("card.play_on")}</span>
+      <div class="targets" role="group" aria-label=${this._t("card.play_on")}>
         ${targets.map((target) => {
           const selected = target.id === current;
           const name = this._speakerName(target.id);
@@ -1259,40 +1257,16 @@ export class SonosRadioCard extends LitElement {
         ? `${coordinatorName} + ${members.length - 1}`
         : coordinatorName
       : this._t("card.no_speaker");
-    const quiet = activeQuietPeriod(this._settings, new Date());
 
     return html`
       <div class="controls">
-        <div class="now-playing">
-          <div class="now-playing-primary">${primary}</div>
-          <div class="now-playing-secondary">
-            ${secondary || groupLabel}
+        <div class="playback-info">
+          <div class="now-playing">
+            <div class="now-playing-primary">${primary}</div>
+            <div class="now-playing-secondary">
+              ${secondary || groupLabel}
+            </div>
           </div>
-        </div>
-
-        <div class="transport">
-          <button
-            class="round primary toggle-playback"
-            aria-label=${isRunning(coordinator)
-              ? this._t("card.stop")
-              : this._t("card.play")}
-            ?disabled=${!available}
-            @click=${this._togglePlayback}
-          >
-            <ha-icon
-              icon=${isRunning(coordinator) ? "mdi:stop" : "mdi:play"}
-            ></ha-icon>
-          </button>
-        </div>
-
-        ${this._renderVolume(
-          GROUP_VOLUME_KEY,
-          groupVolumeLevel,
-          this._t("card.group_volume"),
-          !available,
-        )}
-
-        <div class="actions">
           <button
             class="multiroom"
             aria-label=${this._t("card.multiroom")}
@@ -1309,22 +1283,51 @@ export class SonosRadioCard extends LitElement {
               ? html`<span class="count">${members.length}</span>`
               : nothing}
           </button>
-          <button
-            class="round settings-button ${quiet ? "quiet" : ""}"
-            aria-label=${this._t("settings.title")}
-            title=${quiet
-              ? this._t("settings.quiet_active", { volume: quiet.volume })
-              : this._t("settings.title")}
-            aria-haspopup="dialog"
-            aria-expanded=${this._drawerOpen && this._drawerView === "settings"
-              ? "true"
-              : "false"}
-            @click=${this._openSettingsDrawer}
-          >
-            <ha-icon icon=${quiet ? "mdi:weather-night" : "mdi:tune-variant"}></ha-icon>
-          </button>
+        </div>
+
+        <div class="playback-control">
+          <div class="transport">
+            <button
+              class="round primary toggle-playback"
+              aria-label=${isRunning(coordinator)
+                ? this._t("card.stop")
+                : this._t("card.play")}
+              ?disabled=${!available}
+              @click=${this._togglePlayback}
+            >
+              <ha-icon
+                icon=${isRunning(coordinator) ? "mdi:stop" : "mdi:play"}
+              ></ha-icon>
+            </button>
+          </div>
+          ${this._renderVolume(
+            GROUP_VOLUME_KEY,
+            groupVolumeLevel,
+            this._t("card.group_volume"),
+            !available,
+          )}
         </div>
       </div>
+    `;
+  }
+
+  private _renderSettingsButton() {
+    const quiet = activeQuietPeriod(this._settings, new Date());
+    return html`
+      <button
+        class="settings-button ${quiet ? "quiet" : ""}"
+        aria-label=${this._t("settings.title")}
+        title=${quiet
+          ? this._t("settings.quiet_active", { volume: quiet.volume })
+          : this._t("settings.title")}
+        aria-haspopup="dialog"
+        aria-expanded=${this._drawerOpen && this._drawerView === "settings"
+          ? "true"
+          : "false"}
+        @click=${this._openSettingsDrawer}
+      >
+        <ha-icon icon=${quiet ? "mdi:weather-night" : "mdi:tune-variant"}></ha-icon>
+      </button>
     `;
   }
 
@@ -1719,12 +1722,6 @@ export class SonosRadioCard extends LitElement {
       scrollbar-width: none;
     }
 
-    .targets-label {
-      flex: none;
-      color: var(--secondary-text-color);
-      font-size: 0.875rem;
-    }
-
     .target {
       flex: none;
       display: inline-flex;
@@ -1895,8 +1892,17 @@ export class SonosRadioCard extends LitElement {
       border-top: 1px solid var(--divider-color);
     }
 
+    .playback-info,
+    .playback-control {
+      display: flex;
+      flex: 1 1 320px;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+    }
+
     .now-playing {
-      flex: 1 1 100%;
+      flex: 1;
       min-width: 0;
     }
 
@@ -2056,19 +2062,6 @@ export class SonosRadioCard extends LitElement {
       background: var(--primary-color);
       color: var(--text-primary-color, #fff);
       font-size: 0.75rem;
-    }
-
-    @container (min-width: 720px) {
-      .now-playing {
-        flex: 1 1 180px;
-      }
-    }
-
-    @container (max-width: 600px) {
-      .controls {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
-      }
     }
 
     @container (max-width: 420px) {
@@ -2289,15 +2282,43 @@ export class SonosRadioCard extends LitElement {
       font-size: 0.85rem;
     }
 
-    .actions {
+    .header {
       display: flex;
       align-items: center;
       gap: 8px;
+      min-height: 44px;
+      padding: 8px 8px 0 16px;
+    }
+
+    .header .card-header,
+    .header .targets {
+      flex: 1;
+      min-width: 0;
+      padding: 0;
+    }
+
+    .settings-button {
+      display: inline-flex;
+      flex: none;
+      align-items: center;
+      justify-content: center;
+      width: 44px;
+      height: 44px;
+      margin-left: auto;
+      padding: 0;
+      border: none;
+      border-radius: 50%;
+      background: transparent;
+      color: var(--secondary-text-color);
+      cursor: pointer;
+    }
+
+    .settings-button ha-icon {
+      --mdc-icon-size: 22px;
     }
 
     .settings-button.quiet {
       color: var(--primary-color);
-      border-color: var(--primary-color);
     }
 
     .settings {
