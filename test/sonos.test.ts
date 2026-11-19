@@ -6,6 +6,7 @@ import {
   formatGroupName,
   planGroupVolume,
   planSpeakerRemoval,
+  playbackTargets,
   resolveCoordinator,
   stationIssue,
 } from "../src/sonos.ts";
@@ -270,4 +271,31 @@ test("createTranslator localizes with English fallback", () => {
   assert.equal(german("card.sonos_group", { name: "K?che" }), "Sonos-Gruppe: K?che");
   assert.equal(createTranslator("fr")("card.stop"), "Stop");
   assert.match(stationIssue({ name: "A", media_content_id: "", media_content_type: "music" }, german)!, /Keine Stream-URL/);
+});
+
+test("lists one playback target per group and honours a preferred speaker", () => {
+  const group = { group_members: ["media_player.living", "media_player.bath"] };
+  const hass = hassWith(
+    entity("media_player.kitchen", "idle"),
+    entity("media_player.living", "playing", group),
+    entity("media_player.bath", "playing", group),
+    entity("media_player.office", "unavailable"),
+  );
+  const cfg = config({
+    speakers: [
+      { entity: "media_player.kitchen" },
+      { entity: "media_player.bath" },
+      { entity: "media_player.living" },
+      { entity: "media_player.office" },
+      { entity: "media_player.missing" },
+    ],
+  });
+
+  assert.deepEqual(playbackTargets(hass, cfg), [
+    { id: "media_player.kitchen", members: ["media_player.kitchen"], available: true, playing: false },
+    { id: "media_player.living", members: ["media_player.living", "media_player.bath"], available: true, playing: true },
+    { id: "media_player.office", members: ["media_player.office"], available: false, playing: false },
+  ]);
+  assert.equal(resolveCoordinator(hass, cfg, "media_player.kitchen"), "media_player.kitchen");
+  assert.equal(resolveCoordinator(hass, cfg, "media_player.bath"), "media_player.living");
 });

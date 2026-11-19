@@ -168,6 +168,37 @@ export const formatGroupName = (names: string[]): string =>
     ? (names[0] ?? "")
     : `${names.slice(0, -1).join(", ")} & ${names[names.length - 1]}`;
 
+export interface PlaybackTarget {
+  /** Group coordinator that receives playback commands. */
+  id: string;
+  members: string[];
+  available: boolean;
+  playing: boolean;
+}
+
+/**
+ * Lists the configured speakers as playback targets. Grouped speakers are
+ * merged into one target per group so that choosing a target never splits an
+ * existing Sonos group. `current` is always included.
+ */
+export const playbackTargets = (
+  hass: HomeAssistant,
+  config: SonosRadioCardConfig,
+  current?: string,
+): PlaybackTarget[] => {
+  const coordinators = unique(
+    [...config.speakers.map((speaker) => speaker.entity), current ?? ""]
+      .filter((entityId) => entityId.length > 0 && hass.states[entityId])
+      .map((entityId) => coordinatorOf(hass, entityId)),
+  );
+  return coordinators.map((id) => ({
+    id,
+    members: groupMembers(hass, id),
+    available: isAvailable(hass.states[id]),
+    playing: hass.states[id]?.state === "playing",
+  }));
+};
+
 export type RemovalPlan =
   | { type: "unjoin"; entity: string }
   | { type: "blocked"; entity: string }

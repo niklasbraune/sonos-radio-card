@@ -145,6 +145,22 @@ const formatGroupName = (names) => names.length <= 1
     ? (names[0] ?? "")
     : `${names.slice(0, -1).join(", ")} & ${names[names.length - 1]}`;
 /**
+ * Lists the configured speakers as playback targets. Grouped speakers are
+ * merged into one target per group so that choosing a target never splits an
+ * existing Sonos group. `current` is always included.
+ */
+const playbackTargets = (hass, config, current) => {
+    const coordinators = unique([...config.speakers.map((speaker) => speaker.entity), current ?? ""]
+        .filter((entityId) => entityId.length > 0 && hass.states[entityId])
+        .map((entityId) => coordinatorOf(hass, entityId)));
+    return coordinators.map((id) => ({
+        id,
+        members: groupMembers(hass, id),
+        available: isAvailable(hass.states[id]),
+        playing: hass.states[id]?.state === "playing",
+    }));
+};
+/**
  * Plans how to remove a speaker from its group. Removing the coordinator hands
  * the group over to another member so playback continues in the other rooms.
  * `preferredOrder` (usually the configured speakers) decides the new master.
@@ -272,10 +288,28 @@ const en = {
     "card.not_in_station_list": "Not in your station list",
     "card.no_speaker": "No speaker",
     "card.play": "Play",
-    "card.pause": "Pause",
     "card.stop": "Stop",
     "card.group_volume": "Group volume",
     "card.multiroom": "Multiroom",
+    "card.play_on": "Play on",
+    "settings.title": "Settings",
+    "settings.eyebrow": "Playback",
+    "settings.max_volume": "Maximum volume",
+    "settings.max_volume_help": "Upper limit for all volume sliders. Louder speakers are turned down when playback starts.",
+    "settings.quiet_hours": "Quiet hours",
+    "settings.quiet_hours_help": "Playback started from this card during these times begins at the chosen volume.",
+    "settings.quiet_period": "Quiet hours {index}",
+    "settings.from": "From",
+    "settings.to": "To",
+    "settings.start_volume": "{name}: start volume",
+    "settings.add_quiet": "Add quiet hours",
+    "settings.remove_quiet": "Remove {name}",
+    "settings.active_now": "Active now",
+    "settings.quiet_active": "Quiet hours active: playback starts at {volume}%",
+    "settings.shuffle": "Shuffle playlists",
+    "settings.shuffle_help": "Starts Sonos favorites such as Spotify playlists in shuffle mode. Radio stations are not affected.",
+    "settings.storage_note": "Settings are saved in your Home Assistant user profile and apply to every Sonos Radio Card.",
+    "settings.save_failed": "Settings could not be saved to your profile and are only stored on this device.",
     "card.group_speakers": "Group speakers",
     "card.sonos_group": "Sonos group: {name}",
     "card.no_active_group": "No active group",
@@ -378,10 +412,28 @@ const de = {
     "card.not_in_station_list": "Nicht in deiner Senderliste",
     "card.no_speaker": "Kein Lautsprecher",
     "card.play": "Wiedergabe",
-    "card.pause": "Pause",
     "card.stop": "Stopp",
     "card.group_volume": "Gruppenlautstärke",
     "card.multiroom": "Multiroom",
+    "card.play_on": "Wiedergabe auf",
+    "settings.title": "Einstellungen",
+    "settings.eyebrow": "Wiedergabe",
+    "settings.max_volume": "Maximale Lautstärke",
+    "settings.max_volume_help": "Obergrenze für alle Lautstärkeregler. Lautere Lautsprecher werden beim Start der Wiedergabe heruntergeregelt.",
+    "settings.quiet_hours": "Ruhezeiten",
+    "settings.quiet_hours_help": "Startet die Wiedergabe in diesen Zeiten über die Karte, beginnen die Lautsprecher mit der gewählten Lautstärke.",
+    "settings.quiet_period": "Ruhezeit {index}",
+    "settings.from": "Von",
+    "settings.to": "Bis",
+    "settings.start_volume": "{name}: Startlautstärke",
+    "settings.add_quiet": "Ruhezeit hinzufügen",
+    "settings.remove_quiet": "{name} entfernen",
+    "settings.active_now": "Jetzt aktiv",
+    "settings.quiet_active": "Ruhezeit aktiv: Wiedergabe startet mit {volume} %",
+    "settings.shuffle": "Playlists zufällig abspielen",
+    "settings.shuffle_help": "Startet Sonos-Favoriten wie Spotify-Playlists im Shuffle-Modus. Radiosender sind nicht betroffen.",
+    "settings.storage_note": "Die Einstellungen werden in deinem Home-Assistant-Benutzerprofil gespeichert und gelten für alle Sonos Radio Cards.",
+    "settings.save_failed": "Die Einstellungen konnten nicht im Profil gespeichert werden und liegen nur auf diesem Gerät.",
     "card.group_speakers": "Lautsprecher gruppieren",
     "card.sonos_group": "Sonos-Gruppe: {name}",
     "card.no_active_group": "Keine aktive Gruppe",
@@ -623,6 +675,90 @@ class VolumeThrottle {
         this._onChange();
     }
 }
+
+const SETTINGS_KEY = "sonos-radio-card";
+const DEFAULT_SETTINGS = {
+    max_volume: 100,
+    quiet_hours: [],
+    shuffle_playlists: false,
+};
+const DEFAULT_QUIET_PERIOD = {
+    start: "22:00",
+    end: "07:00",
+    volume: 15,
+};
+const TIME_PATTERN = /^([01]\d|2[0-3]):([0-5]\d)$/;
+const percent = (value, min, fallback) => typeof value === "number" && Number.isFinite(value)
+    ? Math.min(100, Math.max(min, Math.round(value)))
+    : fallback;
+const time = (value, fallback) => typeof value === "string" && TIME_PATTERN.test(value) ? value : fallback;
+/** Turns stored (possibly outdated or hand-edited) data into valid settings. */
+const normalizeSettings = (raw) => {
+    const data = raw && typeof raw === "object" ? raw : {};
+    const periods = Array.isArray(data.quiet_hours) ? data.quiet_hours : [];
+    return {
+        max_volume: percent(data.max_volume, 1, DEFAULT_SETTINGS.max_volume),
+        quiet_hours: periods
+            .filter((item) => Boolean(item && typeof item === "object"))
+            .map((item) => ({
+            start: time(item.start, DEFAULT_QUIET_PERIOD.start),
+            end: time(item.end, DEFAULT_QUIET_PERIOD.end),
+            volume: percent(item.volume, 0, DEFAULT_QUIET_PERIOD.volume),
+        })),
+        shuffle_playlists: data.shuffle_playlists === true,
+    };
+};
+const minutesOf = (value) => {
+    const [hours, minutes] = value.split(":").map(Number);
+    return hours * 60 + minutes;
+};
+/** Equal start and end times cover the whole day. */
+const isInPeriod = (period, now) => {
+    const start = minutesOf(period.start);
+    const end = minutesOf(period.end);
+    const current = now.getHours() * 60 + now.getMinutes();
+    if (start === end) {
+        return true;
+    }
+    return start < end
+        ? current >= start && current < end
+        : current >= start || current < end;
+};
+/** The quietest active period wins when windows overlap. */
+const activeQuietPeriod = (settings, now) => settings.quiet_hours
+    .filter((period) => isInPeriod(period, now))
+    .sort((a, b) => a.volume - b.volume)[0];
+const maxLevel = (settings) => settings.max_volume / 100;
+const capLevel = (level, settings) => Math.min(level, maxLevel(settings));
+/**
+ * Volume (0-1) a speaker should be set to before playback starts, or
+ * `undefined` to leave it alone. Quiet hours only apply when playback starts;
+ * the maximum volume always applies.
+ */
+const startLevel = (current, settings, now, starting) => {
+    const quiet = starting ? activeQuietPeriod(settings, now) : undefined;
+    const target = quiet !== undefined
+        ? capLevel(quiet.volume / 100, settings)
+        : current !== undefined && current > maxLevel(settings)
+            ? maxLevel(settings)
+            : undefined;
+    return target !== undefined &&
+        (current === undefined || Math.abs(current - target) >= 0.005)
+        ? target
+        : undefined;
+};
+/**
+ * Stations that may start a queue (Sonos favorites, playlists, Spotify URIs).
+ * Radio streams cannot be shuffled.
+ */
+const isShuffleCandidate = (station) => {
+    const type = (station.media_content_type || "").toLowerCase();
+    const id = station.media_content_id.trim().toLowerCase();
+    return (type === "favorite_item_id" ||
+        type === "playlist" ||
+        id.startsWith("spotify:") ||
+        id.startsWith("https://open.spotify.com/"));
+};
 
 const FAVORITE_TYPE$1 = "favorite_item_id";
 const absoluteUrl = (value) => typeof value === "string" && /^https?:\/\//i.test(value) ? value : undefined;
@@ -1660,11 +1796,32 @@ const DRAWER_ANIMATION_MS = 220;
 const SWIPE_SLOP_PX = 10;
 const SWIPE_CLOSE_RATIO = 0.3;
 const SWIPE_CLOSE_VELOCITY = 0.5;
+const SETTINGS_SAVE_DELAY_MS = 500;
+const SETTINGS_EVENT = "sonos-radio-card-settings";
 const NOTICE_ICONS = {
     error: "mdi:alert-circle-outline",
     warning: "mdi:alert-outline",
     info: "mdi:information-outline",
 };
+const readLocalSettings = () => {
+    try {
+        const raw = window.localStorage.getItem(SETTINGS_KEY);
+        return raw ? normalizeSettings(JSON.parse(raw)) : undefined;
+    }
+    catch {
+        return undefined;
+    }
+};
+const writeLocalSettings = (settings) => {
+    try {
+        window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+    }
+    catch {
+        // Storage can be disabled (private mode); the profile copy still works.
+    }
+};
+/** Playing or about to play; the transport button then offers Stop. */
+const isRunning = (entity) => entity?.state === "playing" || entity?.state === "buffering";
 /** HA rejects service calls with `{ code, message }` objects, not Errors. */
 const errorMessage = (error) => {
     const message = error && typeof error === "object" && "message" in error
@@ -1679,12 +1836,25 @@ class SonosRadioCard extends i$1 {
         super(...arguments);
         this._drawerOpen = false;
         this._drawerClosing = false;
+        this._drawerView = "group";
+        this._settings = DEFAULT_SETTINGS;
+        this._settingsRequested = false;
+        this._settingsEdited = false;
         this._volume = new VolumeThrottle((key, level) => this._sendVolume(key, level), () => this.requestUpdate(), { intervalMs: VOLUME_THROTTLE_MS, holdMs: VOLUME_HOLD_MS });
         this._membershipTargets = {};
         this._logoUrls = {};
         this._brokenLogos = [];
         this._resolvingLogos = new Set();
         this._waiters = new Set();
+        /** Keeps several cards on the same dashboard in sync. */
+        this._settingsBroadcast = (event) => {
+            const detail = event
+                .detail;
+            if (detail.source !== this) {
+                this._settings = detail.settings;
+                this._settingsEdited = true;
+            }
+        };
         this._closeDrawer = () => {
             if (!this._drawerOpen || this._drawerClosing) {
                 return;
@@ -1714,6 +1884,8 @@ class SonosRadioCard extends i$1 {
         _config: { state: true },
         _drawerOpen: { state: true },
         _drawerClosing: { state: true },
+        _drawerView: { state: true },
+        _settings: { state: true },
         _pendingStation: { state: true },
         _membershipTargets: { state: true },
         _coordinatorOverride: { state: true },
@@ -1740,6 +1912,10 @@ class SonosRadioCard extends i$1 {
             }
         }
         this.requestUpdate("hass", previous);
+        if (!this._settingsRequested) {
+            this._settingsRequested = true;
+            void this._loadSettings();
+        }
     }
     get hass() {
         return this._hass;
@@ -1776,8 +1952,17 @@ class SonosRadioCard extends i$1 {
         }
         return this._translator.t;
     }
+    connectedCallback() {
+        super.connectedCallback();
+        window.addEventListener(SETTINGS_EVENT, this._settingsBroadcast);
+    }
     disconnectedCallback() {
         super.disconnectedCallback();
+        window.removeEventListener(SETTINGS_EVENT, this._settingsBroadcast);
+        if (this._settingsTimer !== undefined) {
+            window.clearTimeout(this._settingsTimer);
+            void this._saveSettings();
+        }
         this._volume.dispose();
         window.clearTimeout(this._pendingTimer);
         window.clearTimeout(this._toastTimer);
@@ -1812,7 +1997,11 @@ class SonosRadioCard extends i$1 {
         if (changed.get("_drawerOpen") === undefined) {
             return;
         }
-        const target = this._drawerOpen ? ".drawer .close" : ".multiroom";
+        const target = this._drawerOpen
+            ? ".drawer .close"
+            : this._drawerView === "settings"
+                ? ".settings-button"
+                : ".multiroom";
         this.renderRoot.querySelector(target)?.focus();
     }
     get _coordinatorId() {
@@ -1896,6 +2085,10 @@ class SonosRadioCard extends i$1 {
         this._pendingStation = index;
         window.clearTimeout(this._pendingTimer);
         this._pendingTimer = window.setTimeout(() => this._pendingTimedOut(index), PENDING_TIMEOUT_MS);
+        const startVolumes = this._startVolumeCommands(this._members, this._coordinator?.state !== "playing");
+        if (startVolumes.length > 0) {
+            await this._sendVolumeCommands(startVolumes);
+        }
         const played = await this._callService("play_media", {
             entity_id: entityId,
             media_content_id: station.media_content_id.trim(),
@@ -1906,19 +2099,63 @@ class SonosRadioCard extends i$1 {
         if (!played) {
             this._clearPending();
         }
-    }
-    _playPause() {
-        const entityId = this._coordinatorId;
-        if (entityId) {
-            void this._callService("media_play_pause", { entity_id: entityId });
+        else if (isShuffleCandidate(station)) {
+            await this._applyShuffle(entityId);
         }
     }
-    _stop() {
+    /** Sets Sonos' play mode for queue-based favorites such as Spotify playlists. */
+    async _applyShuffle(entityId) {
+        const shuffle = this._settings.shuffle_playlists;
+        if (!this._hass || this._hass.states[entityId]?.attributes.shuffle === shuffle) {
+            return;
+        }
+        try {
+            await this._hass.callService("media_player", "shuffle_set", {
+                entity_id: entityId,
+                shuffle,
+            });
+        }
+        catch {
+            // Radio favorites have no queue and cannot be shuffled.
+        }
+    }
+    /** Quiet-hour start volumes and the maximum volume for the given speakers. */
+    _startVolumeCommands(entityIds, starting) {
+        const hass = this._hass;
+        if (!hass) {
+            return [];
+        }
+        const now = new Date();
+        return entityIds.flatMap((entityId) => {
+            const current = hass.states[entityId]?.attributes.volume_level;
+            const level = startLevel(typeof current === "number" ? current : undefined, this._settings, now, starting);
+            return level === undefined
+                ? []
+                : [{ entity_id: entityId, volume_level: Math.round(level * 100) / 100 }];
+        });
+    }
+    async _sendVolumeCommands(commands) {
+        const results = await Promise.all(commands.map((command) => this._callService("volume_set", { ...command }, this._t("card.volume_failed", {
+            name: this._speakerName(command.entity_id),
+        }))));
+        return results.every(Boolean);
+    }
+    /** One button for radio: stops a running stream, otherwise (re)starts playback. */
+    async _togglePlayback() {
         const entityId = this._coordinatorId;
-        if (entityId) {
+        if (!entityId) {
+            return;
+        }
+        if (isRunning(this._coordinator)) {
             this._clearPending();
-            void this._callService("media_stop", { entity_id: entityId });
+            await this._callService("media_stop", { entity_id: entityId });
+            return;
         }
+        const startVolumes = this._startVolumeCommands(this._members, true);
+        if (startVolumes.length > 0) {
+            await this._sendVolumeCommands(startVolumes);
+        }
+        await this._callService("media_play", { entity_id: entityId });
     }
     _sliderLevel(event) {
         return Number(event.target.value) / 100;
@@ -1939,17 +2176,18 @@ class SonosRadioCard extends i$1 {
         const volume = this._hass.states[key]?.attributes.volume_level;
         return typeof volume === "number" ? volume : undefined;
     }
-    async _sendVolume(key, level) {
+    async _sendVolume(key, requested) {
         if (!this._hass) {
             return false;
         }
+        const level = capLevel(requested, this._settings);
         const commands = key === GROUP_VOLUME_KEY
-            ? planGroupVolume(this._hass, this._members, level)
+            ? planGroupVolume(this._hass, this._members, level).map((command) => ({
+                ...command,
+                volume_level: capLevel(command.volume_level, this._settings),
+            }))
             : [{ entity_id: key, volume_level: level }];
-        const results = await Promise.all(commands.map((command) => this._callService("volume_set", { ...command }, this._t("card.volume_failed", {
-            name: this._speakerName(command.entity_id),
-        }))));
-        return results.every(Boolean);
+        return this._sendVolumeCommands(commands);
     }
     _waitFor(check, timeoutMs = GROUP_CHANGE_TIMEOUT_MS) {
         if (this._hass && check(this._hass)) {
@@ -2011,6 +2249,11 @@ class SonosRadioCard extends i$1 {
         if (!master || master === entityId) {
             return;
         }
+        const startVolumes = this._startVolumeCommands([entityId], this._coordinator?.state === "playing" &&
+            this._hass?.states[entityId]?.state !== "playing");
+        if (startVolumes.length > 0) {
+            await this._sendVolumeCommands(startVolumes);
+        }
         const joined = await this._callService("join", { entity_id: master, group_members: [entityId] }, this._t("card.join_failed", { name: this._speakerName(entityId) }));
         if (joined) {
             await this._waitFor((hass) => groupMembers(hass, master).includes(entityId));
@@ -2069,10 +2312,85 @@ class SonosRadioCard extends i$1 {
             await this._callService("media_stop", { entity_id: oldMaster });
         }
     }
-    _openDrawer() {
+    _openDrawer(view = "group") {
         window.clearTimeout(this._drawerTimer);
+        this._drawerView = view;
         this._drawerClosing = false;
         this._drawerOpen = true;
+    }
+    _openGroupDrawer() {
+        this._openDrawer("group");
+    }
+    _openSettingsDrawer() {
+        this._openDrawer("settings");
+    }
+    async _loadSettings() {
+        const cached = readLocalSettings();
+        if (cached) {
+            this._settings = cached;
+        }
+        try {
+            const result = await this._hass?.callWS({
+                type: "frontend/get_user_data",
+                key: SETTINGS_KEY,
+            });
+            // Keep edits that were made while the request was in flight.
+            if (result?.value != null && !this._settingsEdited) {
+                this._settings = normalizeSettings(result.value);
+                writeLocalSettings(this._settings);
+            }
+        }
+        catch {
+            // Older or restricted frontends: the local copy is all we have.
+        }
+    }
+    _updateSettings(changes) {
+        this._settings = normalizeSettings({ ...this._settings, ...changes });
+        this._settingsEdited = true;
+        writeLocalSettings(this._settings);
+        window.dispatchEvent(new CustomEvent(SETTINGS_EVENT, {
+            detail: { source: this, settings: this._settings },
+        }));
+        window.clearTimeout(this._settingsTimer);
+        this._settingsTimer = window.setTimeout(() => {
+            this._settingsTimer = undefined;
+            void this._saveSettings();
+        }, SETTINGS_SAVE_DELAY_MS);
+    }
+    async _saveSettings() {
+        try {
+            await this._hass?.callWS({
+                type: "frontend/set_user_data",
+                key: SETTINGS_KEY,
+                value: this._settings,
+            });
+        }
+        catch (error) {
+            const detail = errorMessage(error);
+            const message = this._t("settings.save_failed");
+            this._showToast(detail ? `${message} ${detail}` : message, "warning");
+        }
+    }
+    _updateQuietPeriod(index, changes) {
+        this._updateSettings({
+            quiet_hours: this._settings.quiet_hours.map((period, i) => i === index ? { ...period, ...changes } : period),
+        });
+    }
+    _addQuietPeriod() {
+        this._updateSettings({
+            quiet_hours: [
+                ...this._settings.quiet_hours,
+                {
+                    ...DEFAULT_QUIET_PERIOD,
+                    volume: Math.min(DEFAULT_QUIET_PERIOD.volume, this._settings.max_volume),
+                },
+            ],
+        });
+    }
+    _removeQuietPeriod(index) {
+        this._updateSettings({
+            quiet_hours: this._settings.quiet_hours.filter((_, i) => i !== index),
+        });
     }
     get _drawerElement() {
         return this.renderRoot.querySelector(".drawer");
@@ -2223,6 +2541,7 @@ class SonosRadioCard extends i$1 {
                 ${notices.map((notice) => this._renderNotice(notice))}
               </div>`
             : A}
+          ${this._renderTargets()}
           ${this._renderStations(activeIndex, available)}
           ${this._renderControls(coordinator, activeIndex, available)}
           ${this._toast ? this._renderNotice(this._toast, true) : A}
@@ -2250,6 +2569,53 @@ class SonosRadioCard extends i$1 {
             : A}
       </div>
     `;
+    }
+    _renderTargets() {
+        if (!this._hass || !this._config) {
+            return A;
+        }
+        const current = this._coordinatorId;
+        const targets = playbackTargets(this._hass, this._config, current);
+        if (targets.length < 2) {
+            return A;
+        }
+        return b `
+      <div
+        class="targets"
+        role="group"
+        aria-label=${this._t("card.play_on")}
+      >
+        <span class="targets-label">${this._t("card.play_on")}</span>
+        ${targets.map((target) => {
+            const selected = target.id === current;
+            const name = this._speakerName(target.id);
+            const label = target.members.length > 1
+                ? `${name} + ${target.members.length - 1}`
+                : name;
+            return b `
+            <button
+              class="target ${selected ? "selected" : ""}"
+              aria-pressed=${selected ? "true" : "false"}
+              title=${formatGroupName(target.members.map((id) => this._speakerName(id)))}
+              ?disabled=${!target.available}
+              @click=${() => this._selectTarget(target.id)}
+            >
+              <ha-icon
+                icon=${target.playing
+                ? "mdi:speaker-play"
+                : target.members.length > 1
+                    ? "mdi:speaker-multiple"
+                    : "mdi:speaker"}
+              ></ha-icon>
+              <span>${label}</span>
+            </button>
+          `;
+        })}
+      </div>
+    `;
+    }
+    _selectTarget(entityId) {
+        this._coordinatorOverride = entityId;
     }
     _renderStations(activeIndex, available) {
         const stations = this._config.stations;
@@ -2319,7 +2685,6 @@ class SonosRadioCard extends i$1 {
         const config = this._config;
         const hass = this._hass;
         const members = this._members;
-        const playing = coordinator?.state === "playing";
         const station = config.stations[activeIndex];
         const attributes = coordinator?.attributes ?? {};
         const channel = typeof attributes.media_channel === "string"
@@ -2360,6 +2725,7 @@ class SonosRadioCard extends i$1 {
                 ? `${coordinatorName} + ${members.length - 1}`
                 : coordinatorName
             : this._t("card.no_speaker");
+        const quiet = activeQuietPeriod(this._settings, new Date());
         return b `
       <div class="controls">
         <div class="now-playing">
@@ -2371,45 +2737,61 @@ class SonosRadioCard extends i$1 {
 
         <div class="transport">
           <button
-            class="round primary"
-            aria-label=${playing ? this._t("card.pause") : this._t("card.play")}
+            class="round primary toggle-playback"
+            aria-label=${isRunning(coordinator)
+            ? this._t("card.stop")
+            : this._t("card.play")}
             ?disabled=${!available}
-            @click=${this._playPause}
+            @click=${this._togglePlayback}
           >
-            <ha-icon icon=${playing ? "mdi:pause" : "mdi:play"}></ha-icon>
-          </button>
-          <button
-            class="round"
-            aria-label=${this._t("card.stop")}
-            ?disabled=${!available}
-            @click=${this._stop}
-          >
-            <ha-icon icon="mdi:stop"></ha-icon>
+            <ha-icon
+              icon=${isRunning(coordinator) ? "mdi:stop" : "mdi:play"}
+            ></ha-icon>
           </button>
         </div>
 
         ${this._renderVolume(GROUP_VOLUME_KEY, groupVolumeLevel, this._t("card.group_volume"), !available)}
 
-        <button
-          class="multiroom"
-          aria-label=${this._t("card.multiroom")}
-          aria-haspopup="dialog"
-          aria-expanded=${this._drawerOpen ? "true" : "false"}
-          ?disabled=${config.speakers.length === 0}
-          @click=${this._openDrawer}
-        >
-          <ha-icon icon="mdi:speaker-multiple"></ha-icon>
-          <span class="multiroom-label">${this._t("card.multiroom")}</span>
-          ${members.length > 1
+        <div class="actions">
+          <button
+            class="multiroom"
+            aria-label=${this._t("card.multiroom")}
+            aria-haspopup="dialog"
+            aria-expanded=${this._drawerOpen && this._drawerView === "group"
+            ? "true"
+            : "false"}
+            ?disabled=${config.speakers.length === 0}
+            @click=${this._openGroupDrawer}
+          >
+            <ha-icon icon="mdi:speaker-multiple"></ha-icon>
+            <span class="multiroom-label">${this._t("card.multiroom")}</span>
+            ${members.length > 1
             ? b `<span class="count">${members.length}</span>`
             : A}
-        </button>
+          </button>
+          <button
+            class="round settings-button ${quiet ? "quiet" : ""}"
+            aria-label=${this._t("settings.title")}
+            title=${quiet
+            ? this._t("settings.quiet_active", { volume: quiet.volume })
+            : this._t("settings.title")}
+            aria-haspopup="dialog"
+            aria-expanded=${this._drawerOpen && this._drawerView === "settings"
+            ? "true"
+            : "false"}
+            @click=${this._openSettingsDrawer}
+          >
+            <ha-icon icon=${quiet ? "mdi:weather-night" : "mdi:tune-variant"}></ha-icon>
+          </button>
+        </div>
       </div>
     `;
     }
     _renderVolume(key, actual, label, disabled) {
         const volume = this._volume.draft(key) ?? actual;
         const percent = Math.round((volume ?? 0) * 100);
+        const max = this._settings.max_volume;
+        const fill = Math.min(100, (percent / max) * 100);
         return b `
       <label class="volume">
         <ha-icon
@@ -2422,11 +2804,11 @@ class SonosRadioCard extends i$1 {
         <input
           type="range"
           min="0"
-          max="100"
+          max=${String(max)}
           step="1"
           aria-label=${label}
-          .value=${l(String(percent))}
-          style="--value: ${percent}%"
+          .value=${l(String(Math.min(percent, max)))}
+          style="--value: ${fill}%"
           ?disabled=${disabled || volume === undefined}
           @input=${(event) => this._volumeInput(key, event)}
           @change=${(event) => this._commitVolume(key, event)}
@@ -2439,11 +2821,10 @@ class SonosRadioCard extends i$1 {
         if (!this._drawerOpen) {
             return A;
         }
-        const members = this._members;
-        const memberSet = new Set(members);
-        const coordinatorId = this._coordinatorId;
-        const groupName = formatGroupName(members.map((id) => this._speakerName(id)));
         const closing = this._drawerClosing ? "closing" : "";
+        const settings = this._drawerView === "settings";
+        const members = this._members;
+        const groupName = formatGroupName(members.map((id) => this._speakerName(id)));
         return b `
       <div class="scrim ${closing}" @click=${this._closeDrawer}></div>
       <aside
@@ -2459,12 +2840,16 @@ class SonosRadioCard extends i$1 {
         <div class="drawer-header">
           <div class="drawer-heading">
             <span class="drawer-eyebrow"
-              >${this._t("card.group_speakers")}</span
+              >${settings
+            ? this._t("settings.eyebrow")
+            : this._t("card.group_speakers")}</span
             >
             <h2 id="drawer-title">
-              ${groupName
-            ? this._t("card.sonos_group", { name: groupName })
-            : this._t("card.no_active_group")}
+              ${settings
+            ? this._t("settings.title")
+            : groupName
+                ? this._t("card.sonos_group", { name: groupName })
+                : this._t("card.no_active_group")}
             </h2>
           </div>
           <button
@@ -2475,10 +2860,149 @@ class SonosRadioCard extends i$1 {
             <ha-icon icon="mdi:close"></ha-icon>
           </button>
         </div>
-        <ul class="rooms">
-          ${this._config.speakers.map((speaker) => this._renderRoom(speaker, memberSet, members.length, coordinatorId))}
-        </ul>
+        ${settings ? this._renderSettings() : this._renderRooms(members)}
       </aside>
+    `;
+    }
+    _renderRooms(members) {
+        const memberSet = new Set(members);
+        const coordinatorId = this._coordinatorId;
+        return b `
+      <ul class="rooms">
+        ${this._config.speakers.map((speaker) => this._renderRoom(speaker, memberSet, members.length, coordinatorId))}
+      </ul>
+    `;
+    }
+    _renderSettings() {
+        const t = this._t;
+        const settings = this._settings;
+        const active = activeQuietPeriod(settings, new Date());
+        return b `
+      <div class="settings">
+        <section class="setting">
+          <div class="setting-header">
+            <ha-icon icon="mdi:volume-high"></ha-icon>
+            <div class="room-text">
+              <span class="room-name"
+                >${t("settings.max_volume")}</span
+              >
+              <span class="secondary">${t("settings.max_volume_help")}</span>
+            </div>
+          </div>
+          ${this._renderSettingSlider(settings.max_volume, 10, 100, t("settings.max_volume"), (value) => this._updateSettings({ max_volume: value }), "max-volume")}
+        </section>
+
+        <section class="setting">
+          <div class="setting-header">
+            <ha-icon icon="mdi:weather-night"></ha-icon>
+            <div class="room-text">
+              <span class="room-name">${t("settings.quiet_hours")}</span>
+              <span class="secondary">${t("settings.quiet_hours_help")}</span>
+            </div>
+          </div>
+          ${settings.quiet_hours.map((period, index) => this._renderQuietPeriod(period, index, period === active))}
+          <button class="add-quiet" @click=${this._addQuietPeriod}>
+            <ha-icon icon="mdi:plus"></ha-icon>
+            <span>${t("settings.add_quiet")}</span>
+          </button>
+        </section>
+
+        <section class="setting">
+          <div class="setting-header">
+            <ha-icon icon="mdi:shuffle-variant"></ha-icon>
+            <div class="room-text">
+              <span class="room-name">${t("settings.shuffle")}</span>
+              <span class="secondary">${t("settings.shuffle_help")}</span>
+            </div>
+            <ha-switch
+              class="shuffle-switch"
+              .checked=${l(settings.shuffle_playlists)}
+              aria-label=${t("settings.shuffle")}
+              @change=${(event) => this._updateSettings({
+            shuffle_playlists: event.target.checked,
+        })}
+            ></ha-switch>
+          </div>
+        </section>
+
+        <p class="settings-note secondary">${t("settings.storage_note")}</p>
+      </div>
+    `;
+    }
+    _renderQuietPeriod(period, index, active) {
+        const t = this._t;
+        const name = t("settings.quiet_period", { index: index + 1 });
+        return b `
+      <div class="quiet-period ${active ? "active" : ""}">
+        <div class="quiet-times">
+          <label>
+            <span>${t("settings.from")}</span>
+            <input
+              type="time"
+              class="quiet-start"
+              .value=${l(period.start)}
+              aria-label=${`${name}: ${t("settings.from")}`}
+              @change=${(event) => this._updateQuietPeriod(index, {
+            start: event.target.value,
+        })}
+            />
+          </label>
+          <label>
+            <span>${t("settings.to")}</span>
+            <input
+              type="time"
+              class="quiet-end"
+              .value=${l(period.end)}
+              aria-label=${`${name}: ${t("settings.to")}`}
+              @change=${(event) => this._updateQuietPeriod(index, {
+            end: event.target.value,
+        })}
+            />
+          </label>
+          ${active
+            ? b `<span class="quiet-badge">${t("settings.active_now")}</span>`
+            : A}
+        </div>
+        <div class="quiet-volume-row">
+          ${this._renderSettingSlider(Math.min(period.volume, this._settings.max_volume), 0, this._settings.max_volume, t("settings.start_volume", { name }), (value) => this._updateQuietPeriod(index, { volume: value }), "quiet-volume")}
+          <button
+            class="round small remove-quiet"
+            aria-label=${t("settings.remove_quiet", { name })}
+            @click=${() => this._removeQuietPeriod(index)}
+          >
+            <ha-icon icon="mdi:delete-outline"></ha-icon>
+          </button>
+        </div>
+      </div>
+    `;
+    }
+    /** Slider for a stored percentage; saves on release, shows the value live. */
+    _renderSettingSlider(value, min, max, label, commit, className) {
+        const fill = max > min ? ((value - min) / (max - min)) * 100 : 100;
+        const show = (event) => {
+            const input = event.target;
+            const current = Number(input.value);
+            input.style.setProperty("--value", `${max > min ? ((current - min) / (max - min)) * 100 : 100}%`);
+            const output = input.nextElementSibling;
+            if (output) {
+                output.textContent = `${current}%`;
+            }
+        };
+        return b `
+      <label class="volume ${className}">
+        <input
+          type="range"
+          min=${String(min)}
+          max=${String(max)}
+          step="1"
+          aria-label=${label}
+          .value=${l(String(value))}
+          style="--value: ${fill}%"
+          @input=${show}
+          @change=${(event) => commit(Number(event.target.value))}
+        />
+        <span class="volume-value">${value}%</span>
+      </label>
     `;
     }
     _renderRoom(speaker, members, memberCount, coordinatorId) {
@@ -2577,6 +3101,54 @@ class SonosRadioCard extends i$1 {
       color: var(--ha-card-header-color, var(--primary-text-color));
       font-size: var(--ha-card-header-font-size, 24px);
       font-weight: 400;
+    }
+
+    .targets {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 12px 16px 0;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    .targets-label {
+      flex: none;
+      color: var(--secondary-text-color);
+      font-size: 0.875rem;
+    }
+
+    .target {
+      flex: none;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 44px;
+      padding: 0 16px;
+      border: 1px solid var(--divider-color, rgba(127, 127, 127, 0.3));
+      border-radius: 22px;
+      background: transparent;
+      color: var(--primary-text-color);
+      font: inherit;
+      cursor: pointer;
+      white-space: nowrap;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .target.selected {
+      border-color: var(--primary-color);
+      background: rgba(var(--rgb-primary-color, 3, 169, 244), 0.15);
+      color: var(--primary-color);
+      font-weight: 500;
+    }
+
+    .target:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+
+    .target ha-icon {
+      --mdc-icon-size: 20px;
     }
 
     .empty {
@@ -3108,6 +3680,132 @@ class SonosRadioCard extends i$1 {
     .secondary {
       color: var(--secondary-text-color);
       font-size: 0.85rem;
+    }
+
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .settings-button.quiet {
+      color: var(--primary-color);
+      border-color: var(--primary-color);
+    }
+
+    .settings {
+      padding: 4px 16px 16px;
+    }
+
+    .setting {
+      padding: 12px 0;
+      border-bottom: 1px solid var(--divider-color);
+    }
+
+    .setting-header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: var(--sonos-radio-touch);
+    }
+
+    .setting-header > ha-icon {
+      flex: none;
+      color: var(--secondary-text-color);
+    }
+
+    .setting-header ha-switch {
+      flex: none;
+      --ha-switch-min-touch-size: var(--sonos-radio-touch);
+    }
+
+    .setting .volume {
+      padding-left: 36px;
+      min-height: 48px;
+    }
+
+    .setting .volume-value {
+      display: inline;
+    }
+
+    .quiet-period {
+      margin: 8px 0 0 36px;
+      padding: 8px 12px 0;
+      border: 1px solid var(--divider-color);
+      border-radius: 12px;
+    }
+
+    .quiet-period.active {
+      border-color: var(--primary-color);
+    }
+
+    .quiet-volume-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .quiet-volume-row .volume {
+      flex: 1;
+      min-width: 0;
+      padding-left: 0;
+    }
+
+    .remove-quiet {
+      flex: none;
+    }
+
+    .quiet-times {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px 12px;
+    }
+
+    .quiet-times label {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--secondary-text-color);
+      font-size: 0.85rem;
+    }
+
+    input[type="time"] {
+      min-height: 44px;
+      padding: 0 8px;
+      border: 1px solid var(--divider-color);
+      border-radius: 8px;
+      background: transparent;
+      color: var(--primary-text-color);
+      font: inherit;
+      color-scheme: light dark;
+    }
+
+    .quiet-badge {
+      padding: 2px 8px;
+      border-radius: 10px;
+      background: var(--primary-color);
+      color: var(--text-primary-color, #fff);
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+
+    .add-quiet {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      min-height: 44px;
+      margin: 8px 0 0 36px;
+      padding: 0 16px;
+      border: 1px dashed var(--divider-color);
+      border-radius: 22px;
+      background: transparent;
+      color: var(--primary-color);
+      cursor: pointer;
+    }
+
+    .settings-note {
+      margin: 12px 0 0;
     }
 
     @media (prefers-reduced-motion: reduce) {

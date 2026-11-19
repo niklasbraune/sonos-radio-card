@@ -40,9 +40,12 @@ const groupedStates = () => {
   ];
 };
 
-const mount = async (hass: MockHass): Promise<SonosRadioCard> => {
+const mount = async (
+  hass: MockHass,
+  cardConfig: SonosRadioCardConfig = config,
+): Promise<SonosRadioCard> => {
   const card = document.createElement("sonos-radio-card") as SonosRadioCard;
-  card.setConfig(config);
+  card.setConfig(cardConfig);
   card.hass = hass;
   document.body.append(card);
   await card.updateComplete;
@@ -58,9 +61,135 @@ const queryAll = (card: SonosRadioCard, selector: string) => [
 
 afterEach(() => {
   document.body.querySelectorAll("sonos-radio-card").forEach((card) => card.remove());
+  window.localStorage.clear();
 });
 
 describe("sonos-radio-card", () => {
+  it("saves settings from the settings panel to the user profile", async () => {
+    const saved: Record<string, unknown>[] = [];
+    const hass = mockHass(groupedStates(), {
+      callWS: (message) => {
+        if (message.type === "frontend/set_user_data") {
+          saved.push(message);
+        }
+        return Promise.resolve(null);
+      },
+    });
+    const card = await mount(hass);
+
+    query(card, ".settings-button")!.click();
+    await card.updateComplete;
+    expect(query(card, "#drawer-title")!.textContent?.trim()).to.equal("Settings");
+
+    query(card, ".add-quiet")!.click();
+    await card.updateComplete;
+    const start = query<HTMLInputElement>(card, ".quiet-start")!;
+    start.value = "21:30";
+    start.dispatchEvent(new Event("change"));
+    const max = query<HTMLInputElement>(card, ".max-volume input")!;
+    max.value = "70";
+    max.dispatchEvent(new Event("change"));
+    const shuffle = query<HTMLElement & { checked: boolean }>(card, ".shuffle-switch")!;
+    shuffle.checked = true;
+    shuffle.dispatchEvent(new Event("change"));
+
+    await waitUntil(() => saved.length > 0, "settings were not saved");
+    expect(saved).to.have.length(1);
+    expect(saved[0]).to.deep.equal({
+      type: "frontend/set_user_data",
+      key: "sonos-radio-card",
+      value: {
+        max_volume: 70,
+        quiet_hours: [{ start: "21:30", end: "07:00", volume: 15 }],
+        shuffle_playlists: true,
+      },
+    });
+  });
+
+  it("starts playback at the quiet-hour volume and shuffles favorites", async () => {
+    const hass = mockHass(
+      [
+        entity("media_player.kitchen", "idle", {
+          group_members: ["media_player.kitchen", "media_player.living"],
+          volume_level: 0.4,
+          shuffle: false,
+        }),
+        entity("media_player.living", "idle", {
+          group_members: ["media_player.kitchen", "media_player.living"],
+          volume_level: 0.1,
+        }),
+      ],
+      {
+        callWS: (message) =>
+          Promise.resolve(
+            message.type === "frontend/get_user_data"
+              ? {
+                  value: {
+                    max_volume: 80,
+                    quiet_hours: [{ start: "00:00", end: "00:00", volume: 10 }],
+                    shuffle_playlists: true,
+                  },
+                }
+              : null,
+          ),
+      },
+    );
+    const card = await mount(hass, {
+      ...config,
+      stations: [
+        { name: "Playlist", media_content_id: "FV:2/7", media_content_type: "favorite_item_id" },
+      ],
+    });
+    await waitUntil(
+      () => query(card, ".settings-button")?.classList.contains("quiet"),
+      "settings were not loaded",
+    );
+    expect(query(card, ".controls input[type=range]")!.getAttribute("max")).to.equal("80");
+
+    query(card, ".station")!.click();
+    await waitUntil(() => hass.calls.length >= 3, "playback was not started");
+    expect(hass.calls.map((call) => [call.service, call.data])).to.deep.equal([
+      ["volume_set", { entity_id: "media_player.kitchen", volume_level: 0.1 }],
+      [
+        "play_media",
+        {
+          entity_id: "media_player.kitchen",
+          media_content_id: "FV:2/7",
+          media_content_type: "favorite_item_id",
+        },
+      ],
+      ["shuffle_set", { entity_id: "media_player.kitchen", shuffle: true }],
+    ]);
+  });
+
+  it("starts playback on the speaker chosen in the card", async () => {
+    const hass = mockHass([
+      entity("media_player.kitchen", "idle", { volume_level: 0.3 }),
+      entity("media_player.living", "idle", { volume_level: 0.3 }),
+    ]);
+    const card = await mount(hass);
+
+    const targets = queryAll(card, ".target");
+    expect(targets.map((t) => t.textContent?.trim())).to.deep.equal([
+      "Kitchen",
+      "Living Room",
+    ]);
+    expect(targets[0].getAttribute("aria-pressed")).to.equal("true");
+
+    targets[1].click();
+    await card.updateComplete;
+    expect(queryAll(card, ".target")[1].getAttribute("aria-pressed")).to.equal("true");
+
+    queryAll(card, ".station")[0].click();
+    expect(hass.calls[0]).to.deep.include({ service: "play_media" });
+    expect(hass.calls[0].data.entity_id).to.equal("media_player.living");
+  });
+
+  it("hides the speaker choice while all speakers form one group", async () => {
+    const card = await mount(mockHass(groupedStates()));
+    expect(queryAll(card, ".target")).to.have.length(0);
+  });
+
   it("highlights the playing station and starts stations on the coordinator", async () => {
     const hass = mockHass(groupedStates());
     const card = await mount(hass);
@@ -84,9 +213,28 @@ describe("sonos-radio-card", () => {
     ]);
   });
 
+  it("toggles between stop and play with a single button", async () => {
+    const hass = mockHass(groupedStates());
+    const card = await mount(hass);
+    const button = query(card, ".toggle-playback")!;
+    expect(queryAll(card, ".transport button")).to.have.length(1);
+    expect(button.getAttribute("aria-label")).to.equal("Stop");
+
+    button.click();
+    await waitUntil(() => hass.calls.length === 1);
+    expect(hass.calls[0]).to.deep.include({ service: "media_stop" });
+
+    card.hass = mockHass([
+      entity("media_player.kitchen", "paused", { volume_level: 0.3 }),
+      entity("media_player.living", "idle", { volume_level: 0.3 }),
+    ]);
+    await card.updateComplete;
+    expect(button.getAttribute("aria-label")).to.equal("Play");
+  });
+
   it("uses the Home Assistant language", async () => {
     const card = await mount(mockHass(groupedStates(), { language: "de" }));
-    expect(query(card, ".transport .round:not(.primary)")!.getAttribute("aria-label")).to.equal(
+    expect(query(card, ".toggle-playback")!.getAttribute("aria-label")).to.equal(
       "Stopp",
     );
     expect(query(card, ".station.active .badge")!.textContent.trim()).to.equal("Läuft");

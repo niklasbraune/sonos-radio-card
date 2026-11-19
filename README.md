@@ -16,13 +16,19 @@ through the visual card editor; no extra scripts, helpers or YAML are needed.
   `media_title`.
 - **One-tap playback** – tapping a tile calls `media_player.play_media` on the
   current group coordinator, so existing Sonos groups stay intact.
-- **Control bar** – now-playing info, large play/pause and stop buttons, a
+- **Speaker choice** – a “Play on” chip row above the stations lets you pick
+  which configured speaker (or existing group) a station starts on, before
+  playback begins.
+- **Control bar** – now-playing info, one large play/stop button, a
   group volume slider (keeps per-room differences) and a **Multiroom** button.
 - **Group speakers drawer** – slides in from the right and closes by tapping
   outside, the close button, Escape or swiping right. It shows the active
   group (for example “Sonos group: Living Room & Kitchen”), a toggle per room
   (`media_player.join` / `media_player.unjoin`) and a per-room volume slider
   with percentage (`media_player.volume_set`).
+- **Settings panel** – a second side panel (tune button next to *Multiroom*)
+  for quiet hours with a start volume, a maximum volume and shuffle for
+  Sonos favorite playlists. See [Settings panel](#settings-panel).
 - **Seamless master handoff** – removing the group master hands the group to
   the next available room, so music keeps playing in the remaining rooms.
 - **Smooth volume sliders** – slider input is throttled (at most one call
@@ -254,6 +260,11 @@ If a logo is missing or fails to load, a radio icon is shown instead.
 - The **group coordinator** is the first entry of the `group_members`
   attribute. Stations are always started on the coordinator, so all grouped
   rooms play along.
+- The **Play on** chips list every configured speaker that is not part of
+  another group, plus one chip per existing group. The chip row is hidden when
+  there is only one choice. The default selection is `master_entity` or the
+  auto-detected coordinator; picking a chip changes the target until the card
+  is reloaded. Unavailable speakers are shown disabled.
 - Turning a room **on** in the drawer joins it to the active group; turning it
   **off** removes it.
 - Turning off the **current master** hands the group over to the next
@@ -262,6 +273,31 @@ If a logo is missing or fails to load, a radio icon is shown instead.
 - The last room of a group cannot be switched off; use **Stop** instead.
 - The group volume slider shifts all members together and keeps their
   relative differences.
+
+## Settings panel
+
+The tune button (<code>mdi:tune-variant</code>) next to **Multiroom** opens a
+settings panel that slides in like the group drawer. Changes are saved
+immediately, no YAML or dashboard edit mode is needed.
+
+| Setting            | Effect |
+| ------------------ | ------ |
+| Maximum volume     | Upper limit (10–100 %) for the group and room sliders. When playback is started from the card, louder speakers are turned down to this limit first. |
+| Quiet hours        | Any number of daily time windows (for example 22:00–07:00) with a start volume. When playback is started from the card during a window, all speakers of the group are set to that volume first. Windows may span midnight; equal start and end times mean the whole day. The quietest window wins when they overlap. While quiet hours are active the tune button shows a moon icon. |
+| Shuffle playlists  | Sets `media_player.shuffle_set` after starting a Sonos favorite (`favorite_item_id`), a `playlist` or a Spotify URI, so playlists start shuffled (on) or in order (off). Radio streams are not affected. |
+
+Notes:
+
+- Quiet hours and the maximum volume are applied by the card when **you
+  start playback from the card** (station tile, play button or joining a
+  room). They are not enforced when playback is started elsewhere, for
+  example in the Sonos app.
+- Times use the clock of the device that shows the card.
+- The settings are stored in your Home Assistant **user profile**
+  (`frontend/set_user_data`, key `sonos-radio-card`), so they follow your
+  user across devices and apply to every Sonos Radio Card. A copy is kept in
+  the browser's local storage as a fallback. Different Home Assistant users
+  (for example a dedicated wall-tablet user) have their own settings.
 
 ## Troubleshooting
 
