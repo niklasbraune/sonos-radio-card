@@ -2539,12 +2539,12 @@ class SonosRadioCard extends i$1 {
             : this._renderTargets()}
             ${this._renderSettingsButton()}
           </div>
+          ${this._config.title ? this._renderTargets() : A}
           ${notices.length > 0
             ? b `<div class="notices">
                 ${notices.map((notice) => this._renderNotice(notice))}
               </div>`
             : A}
-          ${this._config.title ? this._renderTargets() : A}
           ${this._renderStations(activeIndex, available)}
           ${this._renderControls(coordinator, activeIndex, available)}
           ${this._toast ? this._renderNotice(this._toast, true) : A}
@@ -2735,6 +2735,7 @@ class SonosRadioCard extends i$1 {
           <button
             class="multiroom"
             aria-label=${this._t("card.multiroom")}
+            title=${this._t("card.multiroom")}
             aria-haspopup="dialog"
             aria-expanded=${this._drawerOpen && this._drawerView === "group"
             ? "true"
@@ -2743,7 +2744,6 @@ class SonosRadioCard extends i$1 {
             @click=${this._openGroupDrawer}
           >
             <ha-icon icon="mdi:speaker-multiple"></ha-icon>
-            <span class="multiroom-label">${this._t("card.multiroom")}</span>
             ${members.length > 1
             ? b `<span class="count">${members.length}</span>`
             : A}
@@ -3431,19 +3431,24 @@ class SonosRadioCard extends i$1 {
     .multiroom {
       position: relative;
       display: inline-flex;
+      flex: none;
       align-items: center;
-      gap: 8px;
-      height: var(--sonos-radio-touch);
-      padding: 0 20px;
+      justify-content: center;
+      width: calc(var(--sonos-radio-touch) + 8px);
+      height: calc(var(--sonos-radio-touch) + 8px);
+      padding: 0;
       cursor: pointer;
       border: none;
-      border-radius: calc(var(--sonos-radio-touch) / 2);
+      border-radius: 50%;
       background: color-mix(in srgb, var(--primary-color) 18%, transparent);
       color: var(--primary-color);
-      font-weight: 600;
+      --mdc-icon-size: 30px;
     }
 
     .count {
+      position: absolute;
+      top: -2px;
+      right: -2px;
       display: inline-flex;
       align-items: center;
       justify-content: center;
@@ -3457,11 +3462,6 @@ class SonosRadioCard extends i$1 {
     }
 
     @container (max-width: 420px) {
-      .multiroom {
-        padding: 0 16px;
-      }
-
-      .multiroom-label,
       .volume-value {
         display: none;
       }
