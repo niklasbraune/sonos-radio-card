@@ -28,6 +28,21 @@ through the visual card editor; no extra scripts, helpers or YAML are needed.
 - **Helpful hints** – the card shows notices for missing or unavailable
   speakers, empty station lists, stations without a stream URL or with
   suspicious URLs, streams that fail to start, and failed service calls.
+- **Comfortable editor** – pick Sonos favorites from a list, search
+  [Radio Browser](https://www.radio-browser.info/) for stations (stream URL
+  and logo are filled in automatically) and choose logos with the Home
+  Assistant media browser.
+- **German and English** – the card and the editor follow the language of
+  the Home Assistant user profile (English is the fallback).
+- **Sections view ready** – sensible default size in the sections layout
+  (full width, at least half width) and a matching card size in masonry
+  views.
+- **Accessible** – large touch targets, keyboard focus stays inside the open
+  drawer, screen readers ignore the card behind it, and animations are
+  turned off when the system asks for reduced motion.
+- **Instant feedback** – room toggles switch immediately while Sonos
+  regroups (this often takes one or two seconds) and switch back with an
+  error message if the speaker does not respond.
 - Uses Home Assistant theme variables (`--ha-card-background`,
   `--primary-color`, `--ha-card-border-radius`, …) and native HA editor
   components.
@@ -86,7 +101,18 @@ visual editor has two sections:
    and a sortable list of Sonos speakers with an optional display name and
    icon per room.
 2. **Radio stations** – a sortable list of stations with name, type, stream
-   URL or Sonos favorite ID, and logo.
+   URL or Sonos favorite ID, and logo. Helpers in this section:
+   - **Sonos favorite picker** – for the type **Sonos favorite**, the editor
+     lists the favorites of your speakers in a dropdown. Selecting one sets
+     the favorite ID and, if still empty, the name and logo.
+   - **Search Radio Browser** – enter a station name and select **Add** next
+     to a result. The station is added with its stream URL (type `music`)
+     and logo. Only the search term is sent to the public
+     [radio-browser.info](https://www.radio-browser.info/) API, directly from
+     your browser.
+   - **Choose logo** – the image button next to the logo field opens the Home
+     Assistant media browser. Pick an image, for example from **My media**;
+     the card stores it as a `media-source://` URI.
 
 ### Options
 
@@ -174,8 +200,12 @@ Tips:
 
 Stations saved as favorites in the Sonos app (for example from TuneIn or
 Sonos Radio) can be used directly. Select the type **Sonos favorite**
-(`media_content_type: favorite_item_id`) and enter the favorite's ID, for
-example `FV:2/12`:
+(`media_content_type: favorite_item_id`) and pick the favorite from the
+dropdown in the editor. The editor reads the favorites through the Home
+Assistant media browser of your Sonos speakers and falls back to
+`sensor.sonos_favorites`. Select the refresh button after adding new
+favorites in the Sonos app. In YAML, use the favorite's ID, for example
+`FV:2/12`:
 
 ```yaml
 - name: My Sonos Favorite
@@ -183,7 +213,7 @@ example `FV:2/12`:
   media_content_type: favorite_item_id
 ```
 
-To find the ID:
+To find the ID by hand:
 
 1. Go to **Settings → Devices & services → Sonos → Entities** and enable the
    `sensor.sonos_favorites` entity (it is disabled by default).
@@ -208,6 +238,10 @@ Alternatively, use **Developer tools → Template**:
 - a media-source URI, for example
   `media-source://media_source/local/logos/example.png`, which the card
   resolves through Home Assistant.
+
+In the editor, the image button next to the logo field lets you pick an image
+from the Home Assistant media browser instead of typing the path. Stations
+added from the Radio Browser search use the station's logo URL.
 
 If a logo is missing or fails to load, a radio icon is shown instead.
 
@@ -238,7 +272,9 @@ If a logo is missing or fails to load, a radio icon is shown instead.
 | Tile badge “Check URL”                               | The stream URL looks invalid (spaces, missing `https://`, or a URL entered as a Sonos favorite).                           |
 | “… did not start”                                    | Nothing was playing 10 s after tapping. Check that the stream URL is reachable from the speaker and is MP3, AAC or HLS. |
 | “Unknown stream” in the control bar                  | The group plays something that is not in your station list.                                                           |
-| Card does not appear / old version is shown          | Check the dashboard resource, then hard-refresh or increase the `?v=` value.                                          |
+| Card does not appear / old version is shown          | Check the dashboard resource, then hard-refresh or increase the `?v=` value. The browser console (F12) shows the loaded version, for example `SONOS-RADIO-CARD 0.1.0`. |
+| “No Sonos favorites found” in the editor             | Save favorites in the Sonos app, then select the refresh button. Check that the speakers are available.               |
+| Radio Browser search fails                           | The browser cannot reach radio-browser.info (for example in a restricted network). Enter the stream URL by hand.      |
 
 Sonos speakers must be able to reach Home Assistant on TCP port 1400 for
 instant state updates; otherwise the integration falls back to slower
@@ -254,7 +290,16 @@ npm install
 npm run lint       # ESLint (TypeScript + Lit rules)
 npm run typecheck  # TypeScript checks for sources and tests
 npm test           # unit tests (node:test)
+npm run test:browser  # component tests in Chrome (@web/test-runner)
 npm run build      # creates dist/sonos-radio-card.js
+```
+
+The component tests need Chrome or another Chromium browser. To use
+Microsoft Edge, set `CHROME_PATH` first, for example in PowerShell:
+
+```powershell
+$env:CHROME_PATH = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
+npm run test:browser
 ```
 
 Source layout:
@@ -264,7 +309,36 @@ Source layout:
 - `src/sonos.ts` – group, station and notice logic
 - `src/volume.ts` – volume slider throttling
 - `src/types.ts` – configuration types
+- `src/localize.ts` – English and German texts
+- `src/media.ts` – Sonos favorites and media browser helpers
+- `src/radio-browser.ts` – Radio Browser search
+- `test/` – unit tests; `test/browser/` – component tests
 
-`hacs.json` points HACS to `sonos-radio-card.js` in the `dist` folder. For
-HACS releases, attach the built `dist/sonos-radio-card.js` to the release or
-commit it to the default branch.
+`hacs.json` points HACS to `sonos-radio-card.js` in the `dist` folder. Commit
+the rebuilt `dist/sonos-radio-card.js` together with source changes; CI fails
+if it is out of date.
+
+### Continuous integration and releases
+
+GitHub Actions workflows in `.github/workflows/`:
+
+- **CI** (`ci.yml`) – on every push to `main` and every pull request: lint,
+  typecheck, unit tests, component tests and build. The bundle is uploaded as
+  a workflow artifact.
+- **Validate** (`validate.yml`) – runs the official
+  [HACS action](https://github.com/hacs/action) weekly, on pushes and on pull
+  requests. HACS requires a public GitHub repository with a description,
+  topics and issues enabled.
+- **Release** (`release.yml`) – on tags such as `v0.2.0`: checks that the tag
+  matches the `package.json` version, runs all checks, builds and creates a
+  GitHub release with `sonos-radio-card.js` attached.
+
+To release a new version:
+
+```sh
+npm version 0.2.0 --no-git-tag-version
+npm run build
+git commit -am "chore: release 0.2.0"
+git tag v0.2.0
+git push origin main v0.2.0
+```

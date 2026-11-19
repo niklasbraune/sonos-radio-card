@@ -3,7 +3,7 @@
   "compilerOptions": {
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "types": ["node"]
+    "types": ["node", "mocha"]
   },
   "include": ["src/**/*.ts", "test/**/*.ts"]
 }

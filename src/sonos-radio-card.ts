@@ -23,6 +23,8 @@ import {
   stationIssue,
 } from "./sonos.js";
 import type { Notice, RemovalPlan } from "./sonos.js";
+import { createTranslator, languageOf } from "./localize.js";
+import type { Translate } from "./localize.js";
 import { VolumeThrottle } from "./volume.js";
 import "./editor.js";
 
@@ -53,6 +55,9 @@ interface SwipeState {
 }
 
 const MEDIA_SOURCE_PREFIX = "media-source://";
+// Unit and component tests load the sources without the Rollup replacement.
+export const CARD_VERSION =
+  typeof __VERSION__ === "string" ? __VERSION__ : "dev";
 const GROUP_VOLUME_KEY = "__group__";
 const PENDING_TIMEOUT_MS = 10000;
 const VOLUME_THROTTLE_MS = 300;
@@ -88,7 +93,7 @@ export class SonosRadioCard extends LitElement {
     _drawerOpen: { state: true },
     _drawerClosing: { state: true },
     _pendingStation: { state: true },
-    _pendingSpeakers: { state: true },
+    _membershipTargets: { state: true },
     _coordinatorOverride: { state: true },
     _toast: { state: true },
     _logoUrls: { state: true },
@@ -105,7 +110,7 @@ export class SonosRadioCard extends LitElement {
     { intervalMs: VOLUME_THROTTLE_MS, holdMs: VOLUME_HOLD_MS },
   );
   private _pendingStation?: number;
-  private _pendingSpeakers: string[] = [];
+  private _membershipTargets: Record<string, boolean> = {};
   private _coordinatorOverride?: string;
   private _toast?: Notice;
   private _logoUrls: Record<string, string> = {};
@@ -116,6 +121,7 @@ export class SonosRadioCard extends LitElement {
   private _pendingTimer?: number;
   private _toastTimer?: number;
   private _drawerTimer?: number;
+  private _translator?: { language: string | undefined; t: Translate };
 
   setConfig(config: SonosRadioCardConfig): void {
     if (
@@ -160,9 +166,33 @@ export class SonosRadioCard extends LitElement {
     return document.createElement("sonos-radio-card-editor");
   }
 
+  /** Height in 50 px units for the masonry view. */
   getCardSize(): number {
+    const height = this.offsetHeight;
+    if (height > 0) {
+      return Math.max(1, Math.ceil(height / 50));
+    }
+    // Estimate before the first layout: four 150 px tiles per row plus the
+    // control bar and the optional title.
     const rows = Math.ceil((this._config?.stations.length ?? 0) / 4);
-    return 3 + rows * 2;
+    return (this._config?.title ? 1 : 0) + Math.max(rows, 1) * 3 + 2;
+  }
+
+  /** Size in the sections view: full width by default, height follows content. */
+  getGridOptions(): {
+    columns: number;
+    rows: "auto";
+    min_columns: number;
+  } {
+    return { columns: 12, rows: "auto", min_columns: 6 };
+  }
+
+  private get _t(): Translate {
+    const language = languageOf(this._hass);
+    if (!this._translator || this._translator.language !== language) {
+      this._translator = { language, t: createTranslator(language) };
+    }
+    return this._translator.t;
   }
 
   disconnectedCallback(): void {
@@ -257,7 +287,7 @@ export class SonosRadioCard extends LitElement {
       return true;
     } catch (error) {
       const detail = errorMessage(error);
-      const prefix = failure ?? `Failed to call media_player.${service}.`;
+      const prefix = failure ?? this._t("card.service_failed", { service });
       this._showToast(detail ? `${prefix} ${detail}` : prefix);
       return false;
     }
@@ -290,7 +320,9 @@ export class SonosRadioCard extends LitElement {
     // nothing is playing at all.
     if (stillPending && station && this._coordinator?.state !== "playing") {
       this._showToast(
-        `${station.name || "The station"} did not start. Check that the stream URL is reachable and uses a format Sonos supports (MP3, AAC or HLS).`,
+        this._t("card.station_timeout", {
+          name: station.name || this._t("card.the_station"),
+        }),
         "warning",
       );
     }
@@ -304,7 +336,10 @@ export class SonosRadioCard extends LitElement {
     }
     if (!station.media_content_id?.trim()) {
       this._showToast(
-        `${station.name || "This station"}: ${stationIssue(station)} Add it in the card editor.`,
+        this._t("card.station_not_set_up", {
+          name: station.name || this._t("card.this_station"),
+          issue: stationIssue(station, this._t) ?? "",
+        }),
         "warning",
       );
       return;
@@ -324,7 +359,9 @@ export class SonosRadioCard extends LitElement {
         media_content_id: station.media_content_id.trim(),
         media_content_type: station.media_content_type || "music",
       },
-      `Could not start ${station.name || "the station"}.`,
+      this._t("card.station_failed", {
+        name: station.name || this._t("card.the_station"),
+      }),
     );
     if (!played) {
       this._clearPending();
@@ -382,7 +419,9 @@ export class SonosRadioCard extends LitElement {
         this._callService(
           "volume_set",
           { ...command },
-          `Could not change the volume of ${this._speakerName(command.entity_id)}.`,
+          this._t("card.volume_failed", {
+            name: this._speakerName(command.entity_id),
+          }),
         ),
       ),
     );
@@ -439,11 +478,11 @@ export class SonosRadioCard extends LitElement {
   }
 
   private async _toggleSpeaker(entityId: string, join: boolean): Promise<void> {
-    if (this._pendingSpeakers.includes(entityId)) {
+    if (entityId in this._membershipTargets) {
       return;
     }
 
-    this._pendingSpeakers = [...this._pendingSpeakers, entityId];
+    this._membershipTargets = { ...this._membershipTargets, [entityId]: join };
     try {
       if (join) {
         await this._joinSpeaker(entityId);
@@ -451,9 +490,9 @@ export class SonosRadioCard extends LitElement {
         await this._removeSpeaker(entityId);
       }
     } finally {
-      this._pendingSpeakers = this._pendingSpeakers.filter(
-        (id) => id !== entityId,
-      );
+      // Fall back to the real group state: confirmed, reverted or timed out.
+      const { [entityId]: _done, ...rest } = this._membershipTargets;
+      this._membershipTargets = rest;
     }
   }
 
@@ -463,10 +502,11 @@ export class SonosRadioCard extends LitElement {
       return;
     }
 
-    const joined = await this._callService("join", {
-      entity_id: master,
-      group_members: [entityId],
-    });
+    const joined = await this._callService(
+      "join",
+      { entity_id: master, group_members: [entityId] },
+      this._t("card.join_failed", { name: this._speakerName(entityId) }),
+    );
     if (joined) {
       await this._waitFor((hass) =>
         groupMembers(hass, master).includes(entityId),
@@ -486,7 +526,13 @@ export class SonosRadioCard extends LitElement {
     );
 
     if (plan.type === "unjoin") {
-      if (await this._callService("unjoin", { entity_id: entityId })) {
+      if (
+        await this._callService(
+          "unjoin",
+          { entity_id: entityId },
+          this._t("card.unjoin_failed", { name: this._speakerName(entityId) }),
+        )
+      ) {
         await this._waitFor(
           (hass) => groupMembers(hass, entityId).length <= 1,
         );
@@ -510,7 +556,13 @@ export class SonosRadioCard extends LitElement {
     const previousOverride = this._coordinatorOverride;
 
     this._coordinatorOverride = plan.newMaster;
-    if (!(await this._callService("unjoin", { entity_id: oldMaster }))) {
+    if (
+      !(await this._callService(
+        "unjoin",
+        { entity_id: oldMaster },
+        this._t("card.unjoin_failed", { name: this._speakerName(oldMaster) }),
+      ))
+    ) {
       this._coordinatorOverride = previousOverride;
       return;
     }
@@ -588,8 +640,37 @@ export class SonosRadioCard extends LitElement {
   private _handleKeydown = (event: KeyboardEvent): void => {
     if (event.key === "Escape") {
       this._closeDrawer();
+    } else if (event.key === "Tab") {
+      this._trapFocus(event);
     }
   };
+
+  /** Keeps keyboard focus inside the open drawer (modal dialog). */
+  private _trapFocus(event: KeyboardEvent): void {
+    const focusable = [
+      ...(this._drawerElement?.querySelectorAll<HTMLElement>(
+        "button, input, ha-switch",
+      ) ?? []),
+    ].filter(
+      (element) =>
+        !(element as HTMLElement & { disabled?: boolean }).disabled,
+    );
+    if (focusable.length === 0) {
+      return;
+    }
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    const active = this.shadowRoot?.activeElement;
+    const inside = focusable.some((element) => element === active);
+    if (event.shiftKey && (active === first || !inside)) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (active === last || !inside)) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
 
   private _swipeStart(event: PointerEvent): void {
     if (
@@ -725,24 +806,30 @@ export class SonosRadioCard extends LitElement {
     const available = isAvailable(coordinator);
     const activeIndex = this._activeStationIndex();
     const notices = this._hass
-      ? collectNotices(this._hass, this._config, this._coordinatorId, (id) =>
-          this._speakerName(id),
+      ? collectNotices(
+          this._hass,
+          this._config,
+          this._coordinatorId,
+          (id) => this._speakerName(id),
+          this._t,
         )
       : [];
 
     return html`
       <ha-card class=${this._drawerOpen ? "drawer-open" : ""}>
-        ${this._config.title
-          ? html`<h1 class="card-header">${this._config.title}</h1>`
-          : nothing}
-        ${notices.length > 0
-          ? html`<div class="notices">
-              ${notices.map((notice) => this._renderNotice(notice))}
-            </div>`
-          : nothing}
-        ${this._renderStations(activeIndex, available)}
-        ${this._renderControls(coordinator, activeIndex, available)}
-        ${this._toast ? this._renderNotice(this._toast, true) : nothing}
+        <div class="content" ?inert=${this._drawerOpen}>
+          ${this._config.title
+            ? html`<h1 class="card-header">${this._config.title}</h1>`
+            : nothing}
+          ${notices.length > 0
+            ? html`<div class="notices">
+                ${notices.map((notice) => this._renderNotice(notice))}
+              </div>`
+            : nothing}
+          ${this._renderStations(activeIndex, available)}
+          ${this._renderControls(coordinator, activeIndex, available)}
+          ${this._toast ? this._renderNotice(this._toast, true) : nothing}
+        </div>
         ${this._renderDrawer()}
       </ha-card>
     `;
@@ -759,7 +846,7 @@ export class SonosRadioCard extends LitElement {
         ${dismissible
           ? html`<button
               class="round small dismiss"
-              aria-label="Dismiss"
+              aria-label=${this._t("card.dismiss")}
               @click=${this._dismissToast}
             >
               <ha-icon icon="mdi:close"></ha-icon>
@@ -774,11 +861,8 @@ export class SonosRadioCard extends LitElement {
     if (stations.length === 0) {
       return html`<div class="empty">
         <ha-icon icon="mdi:radio-off"></ha-icon>
-        <div class="empty-title">No radio stations yet</div>
-        <div class="secondary">
-          Edit the card and add stations with a stream URL or a Sonos
-          favorite.
-        </div>
+        <div class="empty-title">${this._t("card.empty_title")}</div>
+        <div class="secondary">${this._t("card.empty_text")}</div>
       </div>`;
     }
 
@@ -790,7 +874,7 @@ export class SonosRadioCard extends LitElement {
           const active = index === activeIndex;
           const pending = index === this._pendingStation && !active;
           const logo = this._logoUrl(station);
-          const issue = stationIssue(station);
+          const issue = stationIssue(station, this._t);
           return html`
             <button
               class="station ${active ? "active" : ""} ${pending
@@ -811,25 +895,25 @@ export class SonosRadioCard extends LitElement {
                     />`
                   : html`<ha-icon icon="mdi:radio"></ha-icon>`}
               </div>
-              <span class="station-name">${station.name || "Unnamed"}</span>
+              <span class="station-name">${station.name || this._t("card.unnamed")}</span>
               ${active
                 ? html`<span class="badge">
                     <ha-icon
                       icon=${playing ? "mdi:equalizer" : "mdi:pause"}
                     ></ha-icon>
-                    ${playing ? "Playing" : "Paused"}
+                    ${playing ? this._t("card.playing") : this._t("card.paused")}
                   </span>`
                 : pending
                   ? html`<span class="badge">
                       <ha-icon icon="mdi:loading"></ha-icon>
-                      Starting
+                      ${this._t("card.starting")}
                     </span>`
                   : issue
                     ? html`<span class="badge warning">
                         <ha-icon icon="mdi:alert-outline"></ha-icon>
                         ${station.media_content_id?.trim()
-                          ? "Check URL"
-                          : "Not set up"}
+                          ? this._t("card.check_url")
+                          : this._t("card.not_set_up")}
                       </span>`
                     : nothing}
             </button>
@@ -869,15 +953,15 @@ export class SonosRadioCard extends LitElement {
       channel ??
       title ??
       (unknownStream
-        ? "Unknown stream"
+        ? this._t("card.unknown_stream")
         : available
-          ? "Nothing playing"
+          ? this._t("card.nothing_playing")
           : this._coordinatorId
-            ? "Speaker unavailable"
-            : "No speaker configured");
+            ? this._t("card.speaker_unavailable")
+            : this._t("card.no_speaker_configured"));
     const secondary = [
       unknownStream && config.stations.length > 0
-        ? "Not in your station list"
+        ? this._t("card.not_in_station_list")
         : undefined,
       artist,
       title,
@@ -893,7 +977,7 @@ export class SonosRadioCard extends LitElement {
       ? members.length > 1
         ? `${coordinatorName} + ${members.length - 1}`
         : coordinatorName
-      : "No speaker";
+      : this._t("card.no_speaker");
 
     return html`
       <div class="controls">
@@ -907,7 +991,7 @@ export class SonosRadioCard extends LitElement {
         <div class="transport">
           <button
             class="round primary"
-            aria-label=${playing ? "Pause" : "Play"}
+            aria-label=${playing ? this._t("card.pause") : this._t("card.play")}
             ?disabled=${!available}
             @click=${this._playPause}
           >
@@ -915,7 +999,7 @@ export class SonosRadioCard extends LitElement {
           </button>
           <button
             class="round"
-            aria-label="Stop"
+            aria-label=${this._t("card.stop")}
             ?disabled=${!available}
             @click=${this._stop}
           >
@@ -926,20 +1010,20 @@ export class SonosRadioCard extends LitElement {
         ${this._renderVolume(
           GROUP_VOLUME_KEY,
           groupVolumeLevel,
-          "Group volume",
+          this._t("card.group_volume"),
           !available,
         )}
 
         <button
           class="multiroom"
-          aria-label="Multiroom"
+          aria-label=${this._t("card.multiroom")}
           aria-haspopup="dialog"
           aria-expanded=${this._drawerOpen ? "true" : "false"}
           ?disabled=${config.speakers.length === 0}
           @click=${this._openDrawer}
         >
           <ha-icon icon="mdi:speaker-multiple"></ha-icon>
-          <span class="multiroom-label">Multiroom</span>
+          <span class="multiroom-label">${this._t("card.multiroom")}</span>
           ${members.length > 1
             ? html`<span class="count">${members.length}</span>`
             : nothing}
@@ -1009,14 +1093,18 @@ export class SonosRadioCard extends LitElement {
       >
         <div class="drawer-header">
           <div class="drawer-heading">
-            <span class="drawer-eyebrow">Group speakers</span>
+            <span class="drawer-eyebrow"
+              >${this._t("card.group_speakers")}</span
+            >
             <h2 id="drawer-title">
-              ${groupName ? `Sonos group: ${groupName}` : "No active group"}
+              ${groupName
+                ? this._t("card.sonos_group", { name: groupName })
+                : this._t("card.no_active_group")}
             </h2>
           </div>
           <button
             class="round small close"
-            aria-label="Close"
+            aria-label=${this._t("card.close")}
             @click=${this._closeDrawer}
           >
             <ha-icon icon="mdi:close"></ha-icon>
@@ -1045,28 +1133,31 @@ export class SonosRadioCard extends LitElement {
     const entityId = speaker.entity;
     const entity = this._hass?.states[entityId];
     const available = isAvailable(entity);
-    const inGroup = members.has(entityId);
+    const target = this._membershipTargets[entityId];
+    const pending = target !== undefined;
+    // Show the requested state right away; Sonos takes a moment to regroup.
+    const inGroup = target ?? members.has(entityId);
     const isMaster = entityId === coordinatorId;
-    const pending = this._pendingSpeakers.includes(entityId);
-    const soleMember = inGroup && memberCount <= 1;
+    const soleMember = members.has(entityId) && memberCount <= 1;
     const name = this._speakerName(entityId, speaker);
     const volume = entity?.attributes.volume_level;
 
+    const t = this._t;
     const status = !entity
-      ? "Not found in Home Assistant"
+      ? t("room.not_found")
       : !available
-        ? "Unavailable – check power and network"
+        ? t("room.unavailable")
         : pending
-        ? inGroup
-          ? "Leaving group…"
-          : "Joining group…"
-        : isMaster
-          ? soleMember
-            ? "Master · only room in group"
-            : "Group master"
-          : inGroup
-            ? "In group"
-            : "Not in group";
+          ? inGroup
+            ? t("room.joining")
+            : t("room.leaving")
+          : isMaster
+            ? soleMember
+              ? t("room.master_only")
+              : t("room.master")
+            : inGroup
+              ? t("room.in_group")
+              : t("room.not_in_group");
 
     return html`
       <li
@@ -1086,7 +1177,7 @@ export class SonosRadioCard extends LitElement {
           <ha-switch
             .checked=${live(inGroup)}
             .disabled=${!available || pending || soleMember || !coordinatorId}
-            aria-label=${`${name} in group`}
+            aria-label=${t("card.room_in_group", { name })}
             @change=${(event: Event) =>
               this._toggleSpeaker(
                 entityId,
@@ -1097,7 +1188,7 @@ export class SonosRadioCard extends LitElement {
         ${this._renderVolume(
           entityId,
           typeof volume === "number" ? volume : undefined,
-          `${name} volume`,
+          t("card.room_volume", { name }),
           !available,
         )}
       </li>
@@ -1692,6 +1783,11 @@ export class SonosRadioCard extends LitElement {
 
 if (!customElements.get("sonos-radio-card")) {
   customElements.define("sonos-radio-card", SonosRadioCard);
+  console.info(
+    `%c SONOS-RADIO-CARD %c ${CARD_VERSION} `,
+    "color: #fff; background: #03a9f4; font-weight: 700;",
+    "color: #03a9f4; background: #fff; font-weight: 700;",
+  );
 }
 
 window.customCards = window.customCards ?? [];
@@ -1699,7 +1795,7 @@ if (!window.customCards.some((card) => card.type === "sonos-radio-card")) {
   window.customCards.push({
     type: "sonos-radio-card",
     name: "Sonos Radio Card",
-    description: "Control Sonos speakers and radio stations.",
+    description: createTranslator(navigator.language)("card.description"),
     preview: false,
   });
 }

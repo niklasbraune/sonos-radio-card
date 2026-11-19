@@ -170,25 +170,23 @@ const planSpeakerRemoval = (hass, entityId, preferredOrder = []) => {
 // media-source://, …), so only IDs without any scheme are flagged.
 const HAS_SCHEME = /^[a-z][a-z0-9+.-]*:/i;
 /** Returns a hint when a station cannot (or probably cannot) be played. */
-const stationIssue = (station) => {
+const stationIssue = (station, t) => {
     const id = station.media_content_id?.trim() ?? "";
     const type = station.media_content_type || "music";
     if (!id) {
         return type === "favorite_item_id"
-            ? "No Sonos favorite selected."
-            : "No stream URL set.";
+            ? t("issue.no_favorite")
+            : t("issue.no_url");
     }
     if (type === "favorite_item_id") {
-        return /^https?:\/\//i.test(id)
-            ? "This looks like a URL. Set the type to “Stream URL”."
-            : undefined;
+        return /^https?:\/\//i.test(id) ? t("issue.url_as_favorite") : undefined;
     }
     if (type === "music") {
         if (/^https?:\/\//i.test(id) && /\s/.test(id)) {
-            return "The stream URL contains spaces.";
+            return t("issue.url_spaces");
         }
         if (!HAS_SCHEME.test(id)) {
-            return "The stream URL should start with http:// or https://.";
+            return t("issue.url_scheme");
         }
     }
     return undefined;
@@ -197,31 +195,26 @@ const stationIssue = (station) => {
  * Collects configuration and availability problems that should be shown on
  * the card. `name` maps entity IDs to display names.
  */
-const collectNotices = (hass, config, coordinatorId, name) => {
+const collectNotices = (hass, config, coordinatorId, name, t) => {
     const notices = [];
     const speakers = config.speakers
         .map((speaker) => speaker.entity)
         .filter((entityId) => entityId.length > 0);
     const configured = unique([config.master_entity ?? "", ...speakers].filter((id) => id.length > 0));
     if (configured.length === 0) {
-        return [
-            {
-                level: "error",
-                message: "No Sonos speakers configured. Edit the card to add at least one speaker.",
-            },
-        ];
+        return [{ level: "error", message: t("notice.no_speakers") }];
     }
     for (const entityId of configured) {
         if (!entityId.startsWith("media_player.")) {
             notices.push({
                 level: "warning",
-                message: `${entityId} is not a media player. Pick a Sonos media_player entity in the card editor.`,
+                message: t("notice.not_media_player", { entity: entityId }),
             });
         }
         else if (!hass.states[entityId]) {
             notices.push({
                 level: "warning",
-                message: `${entityId} was not found in Home Assistant. Check the entity ID in the card editor.`,
+                message: t("notice.not_found", { entity: entityId }),
             });
         }
     }
@@ -230,8 +223,8 @@ const collectNotices = (hass, config, coordinatorId, name) => {
         notices.push({
             level: "error",
             message: known.length === 1
-                ? `${name(known[0])} is unavailable. Make sure the speaker is powered on and connected to your network.`
-                : "All Sonos speakers are unavailable. Check power, network, and the Sonos integration in Home Assistant.",
+                ? t("notice.speaker_unavailable", { name: name(known[0]) })
+                : t("notice.all_unavailable"),
         });
         return notices;
     }
@@ -243,11 +236,238 @@ const collectNotices = (hass, config, coordinatorId, name) => {
         coordinatorId !== master) {
         notices.push({
             level: "info",
-            message: `Default speaker ${name(master)} is unavailable, using ${name(coordinatorId)} instead.`,
+            message: t("notice.master_fallback", {
+                master: name(master),
+                name: name(coordinatorId),
+            }),
         });
     }
     return notices;
 };
+
+const en = {
+    "card.description": "Control Sonos speakers and radio stations.",
+    "card.unnamed": "Unnamed",
+    "card.this_station": "This station",
+    "card.the_station": "The station",
+    "card.service_failed": "Failed to call media_player.{service}.",
+    "card.station_not_set_up": "{name}: {issue} Add it in the card editor.",
+    "card.station_failed": "Could not start {name}.",
+    "card.station_timeout": "{name} did not start. Check that the stream URL is reachable and uses a format Sonos supports (MP3, AAC or HLS).",
+    "card.volume_failed": "Could not change the volume of {name}.",
+    "card.join_failed": "Could not add {name} to the group.",
+    "card.unjoin_failed": "Could not remove {name} from the group.",
+    "card.dismiss": "Dismiss",
+    "card.empty_title": "No radio stations yet",
+    "card.empty_text": "Edit the card and add stations with a stream URL or a Sonos favorite.",
+    "card.playing": "Playing",
+    "card.paused": "Paused",
+    "card.starting": "Starting",
+    "card.check_url": "Check URL",
+    "card.not_set_up": "Not set up",
+    "card.unknown_stream": "Unknown stream",
+    "card.nothing_playing": "Nothing playing",
+    "card.speaker_unavailable": "Speaker unavailable",
+    "card.no_speaker_configured": "No speaker configured",
+    "card.not_in_station_list": "Not in your station list",
+    "card.no_speaker": "No speaker",
+    "card.play": "Play",
+    "card.pause": "Pause",
+    "card.stop": "Stop",
+    "card.group_volume": "Group volume",
+    "card.multiroom": "Multiroom",
+    "card.group_speakers": "Group speakers",
+    "card.sonos_group": "Sonos group: {name}",
+    "card.no_active_group": "No active group",
+    "card.close": "Close",
+    "card.room_in_group": "{name} in group",
+    "card.room_volume": "{name} volume",
+    "room.not_found": "Not found in Home Assistant",
+    "room.unavailable": "Unavailable – check power and network",
+    "room.leaving": "Leaving group…",
+    "room.joining": "Joining group…",
+    "room.master_only": "Master · only room in group",
+    "room.master": "Group master",
+    "room.in_group": "In group",
+    "room.not_in_group": "Not in group",
+    "issue.no_favorite": "No Sonos favorite selected.",
+    "issue.no_url": "No stream URL set.",
+    "issue.url_as_favorite": "This looks like a URL. Set the type to “Stream URL”.",
+    "issue.url_spaces": "The stream URL contains spaces.",
+    "issue.url_scheme": "The stream URL should start with http:// or https://.",
+    "notice.no_speakers": "No Sonos speakers configured. Edit the card to add at least one speaker.",
+    "notice.not_media_player": "{entity} is not a media player. Pick a Sonos media_player entity in the card editor.",
+    "notice.not_found": "{entity} was not found in Home Assistant. Check the entity ID in the card editor.",
+    "notice.speaker_unavailable": "{name} is unavailable. Make sure the speaker is powered on and connected to your network.",
+    "notice.all_unavailable": "All Sonos speakers are unavailable. Check power, network, and the Sonos integration in Home Assistant.",
+    "notice.master_fallback": "Default speaker {master} is unavailable, using {name} instead.",
+    "editor.general": "General and speakers",
+    "editor.title": "Card title",
+    "editor.master": "Default master speaker",
+    "editor.master_helper": "Leave empty to automatically detect the current Sonos group master.",
+    "editor.speakers": "Sonos speakers",
+    "editor.speaker_n": "Speaker {n}",
+    "editor.speaker_up": "Move speaker up",
+    "editor.speaker_down": "Move speaker down",
+    "editor.speaker_remove": "Remove speaker",
+    "editor.speaker_entity": "Speaker entity",
+    "editor.display_name": "Display name",
+    "editor.icon": "Icon",
+    "editor.add_speaker": "Add speaker",
+    "editor.stations": "Radio stations",
+    "editor.station_n": "Station {n}",
+    "editor.station_up": "Move station up",
+    "editor.station_down": "Move station down",
+    "editor.station_remove": "Remove station",
+    "editor.station_name": "Station name",
+    "editor.content_type": "Media content type",
+    "editor.type_music": "Stream URL (music / Radio Browser)",
+    "editor.type_favorite": "Sonos favorite",
+    "editor.content_id": "Stream URL / media content ID",
+    "editor.content_id_placeholder": "https://... or Sonos favorite ID",
+    "editor.logo": "Logo URL or media-source",
+    "editor.logo_placeholder": "https://... or media-source://...",
+    "editor.helper_favorite": "Pick a favorite or enter the Sonos favorite ID (for example FV:2/12).",
+    "editor.helper_music": "Radio Browser stations use their stream URL with the “music” media content type.",
+    "editor.add_station": "Add station",
+    "editor.favorite": "Sonos favorite",
+    "editor.favorites_loading": "Loading Sonos favorites…",
+    "editor.favorites_failed": "Could not load Sonos favorites. Enter the favorite ID manually.",
+    "editor.favorites_empty": "No Sonos favorites found. Add favorites in the Sonos app.",
+    "editor.favorites_reload": "Reload favorites",
+    "editor.search_title": "Find stations on Radio Browser",
+    "editor.search_label": "Station name",
+    "editor.search": "Search",
+    "editor.search_helper": "Searches the public radio-browser.info directory. Only the search term is sent.",
+    "editor.search_empty": "No stations found.",
+    "editor.search_failed": "Radio Browser is not reachable. Try again later.",
+    "editor.search_add": "Add",
+    "editor.search_added": "Added",
+    "editor.browse_logo": "Pick logo from media",
+    "editor.browse_title": "Media",
+    "editor.browse_back": "Back",
+    "editor.browse_close": "Close media browser",
+    "editor.browse_empty": "This folder contains no images.",
+    "editor.browse_failed": "Could not open the media browser.",
+    "editor.browse_loading": "Loading…",
+};
+const de = {
+    "card.description": "Sonos-Lautsprecher und Radiosender steuern.",
+    "card.unnamed": "Ohne Namen",
+    "card.this_station": "Dieser Sender",
+    "card.the_station": "Der Sender",
+    "card.service_failed": "media_player.{service} ist fehlgeschlagen.",
+    "card.station_not_set_up": "{name}: {issue} Ergänze ihn im Karteneditor.",
+    "card.station_failed": "{name} konnte nicht gestartet werden.",
+    "card.station_timeout": "{name} startet nicht. Prüfe, ob die Stream-URL erreichbar ist und ein von Sonos unterstütztes Format nutzt (MP3, AAC oder HLS).",
+    "card.volume_failed": "Die Lautstärke von {name} konnte nicht geändert werden.",
+    "card.join_failed": "{name} konnte nicht zur Gruppe hinzugefügt werden.",
+    "card.unjoin_failed": "{name} konnte nicht aus der Gruppe entfernt werden.",
+    "card.dismiss": "Schließen",
+    "card.empty_title": "Noch keine Radiosender",
+    "card.empty_text": "Bearbeite die Karte und füge Sender mit Stream-URL oder Sonos-Favorit hinzu.",
+    "card.playing": "Läuft",
+    "card.paused": "Pausiert",
+    "card.starting": "Startet",
+    "card.check_url": "URL prüfen",
+    "card.not_set_up": "Nicht eingerichtet",
+    "card.unknown_stream": "Unbekannter Stream",
+    "card.nothing_playing": "Keine Wiedergabe",
+    "card.speaker_unavailable": "Lautsprecher nicht verfügbar",
+    "card.no_speaker_configured": "Kein Lautsprecher eingerichtet",
+    "card.not_in_station_list": "Nicht in deiner Senderliste",
+    "card.no_speaker": "Kein Lautsprecher",
+    "card.play": "Wiedergabe",
+    "card.pause": "Pause",
+    "card.stop": "Stopp",
+    "card.group_volume": "Gruppenlautstärke",
+    "card.multiroom": "Multiroom",
+    "card.group_speakers": "Lautsprecher gruppieren",
+    "card.sonos_group": "Sonos-Gruppe: {name}",
+    "card.no_active_group": "Keine aktive Gruppe",
+    "card.close": "Schließen",
+    "card.room_in_group": "{name} in der Gruppe",
+    "card.room_volume": "Lautstärke {name}",
+    "room.not_found": "In Home Assistant nicht gefunden",
+    "room.unavailable": "Nicht verfügbar – Strom und Netzwerk prüfen",
+    "room.leaving": "Verlässt die Gruppe…",
+    "room.joining": "Tritt der Gruppe bei…",
+    "room.master": "Gruppen-Master",
+    "room.master_only": "Master · einziger Raum in der Gruppe",
+    "room.in_group": "In der Gruppe",
+    "room.not_in_group": "Nicht in der Gruppe",
+    "issue.no_favorite": "Kein Sonos-Favorit ausgewählt.",
+    "issue.no_url": "Keine Stream-URL angegeben.",
+    "issue.url_as_favorite": "Das sieht nach einer URL aus. Stelle den Typ auf „Stream-URL“.",
+    "issue.url_spaces": "Die Stream-URL enthält Leerzeichen.",
+    "issue.url_scheme": "Die Stream-URL sollte mit http:// oder https:// beginnen.",
+    "notice.no_speakers": "Keine Sonos-Lautsprecher eingerichtet. Bearbeite die Karte und füge mindestens einen Lautsprecher hinzu.",
+    "notice.not_media_player": "{entity} ist kein Media-Player. Wähle im Karteneditor eine Sonos-media_player-Entität.",
+    "notice.not_found": "{entity} wurde in Home Assistant nicht gefunden. Prüfe die Entitäts-ID im Karteneditor.",
+    "notice.speaker_unavailable": "{name} ist nicht verfügbar. Prüfe, ob der Lautsprecher eingeschaltet und mit dem Netzwerk verbunden ist.",
+    "notice.all_unavailable": "Alle Sonos-Lautsprecher sind nicht verfügbar. Prüfe Strom, Netzwerk und die Sonos-Integration in Home Assistant.",
+    "notice.master_fallback": "Standard-Lautsprecher {master} ist nicht verfügbar, stattdessen wird {name} verwendet.",
+    "editor.general": "Allgemein und Lautsprecher",
+    "editor.title": "Kartentitel",
+    "editor.master": "Standard-Master-Lautsprecher",
+    "editor.master_helper": "Leer lassen, um den aktuellen Master der Sonos-Gruppe automatisch zu erkennen.",
+    "editor.speakers": "Sonos-Lautsprecher",
+    "editor.speaker_n": "Lautsprecher {n}",
+    "editor.speaker_up": "Lautsprecher nach oben",
+    "editor.speaker_down": "Lautsprecher nach unten",
+    "editor.speaker_remove": "Lautsprecher entfernen",
+    "editor.speaker_entity": "Lautsprecher-Entität",
+    "editor.display_name": "Anzeigename",
+    "editor.icon": "Symbol",
+    "editor.add_speaker": "Lautsprecher hinzufügen",
+    "editor.stations": "Radiosender",
+    "editor.station_n": "Sender {n}",
+    "editor.station_up": "Sender nach oben",
+    "editor.station_down": "Sender nach unten",
+    "editor.station_remove": "Sender entfernen",
+    "editor.station_name": "Sendername",
+    "editor.content_type": "Medientyp",
+    "editor.type_music": "Stream-URL (music / Radio Browser)",
+    "editor.type_favorite": "Sonos-Favorit",
+    "editor.content_id": "Stream-URL / Medien-ID",
+    "editor.content_id_placeholder": "https://... oder Sonos-Favoriten-ID",
+    "editor.logo": "Logo-URL oder media-source",
+    "editor.logo_placeholder": "https://... oder media-source://...",
+    "editor.helper_favorite": "Wähle einen Favoriten oder gib die Sonos-Favoriten-ID ein (z. B. FV:2/12).",
+    "editor.helper_music": "Radio-Browser-Sender nutzen ihre Stream-URL mit dem Medientyp „music“.",
+    "editor.add_station": "Sender hinzufügen",
+    "editor.favorite": "Sonos-Favorit",
+    "editor.favorites_loading": "Sonos-Favoriten werden geladen…",
+    "editor.favorites_failed": "Sonos-Favoriten konnten nicht geladen werden. Gib die Favoriten-ID manuell ein.",
+    "editor.favorites_empty": "Keine Sonos-Favoriten gefunden. Lege Favoriten in der Sonos-App an.",
+    "editor.favorites_reload": "Favoriten neu laden",
+    "editor.search_title": "Sender bei Radio Browser suchen",
+    "editor.search_label": "Sendername",
+    "editor.search": "Suchen",
+    "editor.search_helper": "Durchsucht das öffentliche Verzeichnis radio-browser.info. Es wird nur der Suchbegriff übertragen.",
+    "editor.search_empty": "Keine Sender gefunden.",
+    "editor.search_failed": "Radio Browser ist nicht erreichbar. Versuche es später erneut.",
+    "editor.search_add": "Hinzufügen",
+    "editor.search_added": "Hinzugefügt",
+    "editor.browse_logo": "Logo aus Medien wählen",
+    "editor.browse_title": "Medien",
+    "editor.browse_back": "Zurück",
+    "editor.browse_close": "Medienbrowser schließen",
+    "editor.browse_empty": "Dieser Ordner enthält keine Bilder.",
+    "editor.browse_failed": "Der Medienbrowser konnte nicht geöffnet werden.",
+    "editor.browse_loading": "Wird geladen…",
+};
+const TRANSLATIONS = { en, de };
+const format = (template, vars) => vars
+    ? template.replace(/\{(\w+)\}/g, (match, name) => name in vars ? String(vars[name]) : match)
+    : template;
+/** Returns a translator for `language` (e.g. "de-AT"), falling back to English. */
+const createTranslator = (language) => {
+    const base = (language ?? "en").toLowerCase().split("-")[0];
+    const strings = TRANSLATIONS[base] ?? en;
+    return (key, vars) => format(strings[key] ?? en[key], vars);
+};
+const languageOf = (hass) => hass?.locale?.language ?? hass?.language;
 
 /**
  * Throttles volume slider changes per slider key.
@@ -404,6 +624,153 @@ class VolumeThrottle {
     }
 }
 
+const FAVORITE_TYPE$1 = "favorite_item_id";
+const absoluteUrl = (value) => typeof value === "string" && /^https?:\/\//i.test(value) ? value : undefined;
+const browsePlayer = (hass, entityId, media_content_type, media_content_id) => hass.callWS({
+    type: "media_player/browse_media",
+    entity_id: entityId,
+    media_content_type,
+    media_content_id,
+});
+const favoritesFromSensor = (hass) => {
+    for (const [entityId, entity] of Object.entries(hass.states)) {
+        const items = entity.attributes.items;
+        if (entityId.startsWith("sensor.") &&
+            entityId.includes("sonos_favorites") &&
+            items &&
+            typeof items === "object") {
+            return Object.entries(items).map(([id, title]) => ({ id, title: typeof title === "string" ? title : id }));
+        }
+    }
+    return [];
+};
+/**
+ * Loads the "My Sonos" favorites through the media browser of the first
+ * reachable speaker (with artwork), falling back to `sensor.sonos_favorites`.
+ */
+const loadSonosFavorites = async (hass, entityIds) => {
+    let lastError;
+    for (const entityId of entityIds) {
+        if (!hass.states[entityId]) {
+            continue;
+        }
+        try {
+            const root = await browsePlayer(hass, entityId, "favorites", "");
+            const items = [];
+            for (const child of root.children ?? []) {
+                if (child.media_content_type === FAVORITE_TYPE$1) {
+                    items.push(child);
+                }
+                else if (child.can_expand) {
+                    const folder = await browsePlayer(hass, entityId, child.media_content_type, child.media_content_id);
+                    items.push(...(folder.children ?? []).filter((item) => item.media_content_type === FAVORITE_TYPE$1));
+                }
+            }
+            return items.map((item) => ({
+                id: item.media_content_id,
+                title: item.title,
+                thumbnail: absoluteUrl(item.thumbnail),
+            }));
+        }
+        catch (error) {
+            lastError = error;
+        }
+    }
+    const fromSensor = favoritesFromSensor(hass);
+    if (fromSensor.length > 0 || lastError === undefined) {
+        return fromSensor;
+    }
+    throw lastError instanceof Error ? lastError : new Error("Browse failed");
+};
+/** Browses Home Assistant media sources; omit `id` for the root. */
+const browseMediaSource = (hass, id) => hass.callWS(id
+    ? { type: "media_source/browse_media", media_content_id: id }
+    : { type: "media_source/browse_media" });
+const isImage = (item) => item.media_class === "image" || item.media_content_type.startsWith("image/");
+
+// radio-browser.info asks clients to use its DNS-balanced mirrors; the "all"
+// host lists the currently active ones.
+const MIRRORS = [
+    "https://de1.api.radio-browser.info",
+    "https://all.api.radio-browser.info",
+];
+const REQUEST_TIMEOUT_MS = 8000;
+const httpUrl = (value) => typeof value === "string" && /^https?:\/\//i.test(value.trim())
+    ? value.trim()
+    : undefined;
+/** Maps a raw Radio Browser station to a result, or drops unusable entries. */
+const toRadioBrowserResult = (raw) => {
+    if (!raw || typeof raw !== "object") {
+        return undefined;
+    }
+    const item = raw;
+    const url = httpUrl(item.url_resolved) ?? httpUrl(item.url);
+    const name = typeof item.name === "string" ? item.name.trim() : "";
+    if (!url || !name) {
+        return undefined;
+    }
+    return {
+        id: typeof item.stationuuid === "string" ? item.stationuuid : url,
+        name,
+        url,
+        favicon: httpUrl(item.favicon),
+        codec: typeof item.codec === "string" && item.codec.length > 0
+            ? item.codec
+            : undefined,
+        bitrate: typeof item.bitrate === "number" && item.bitrate > 0
+            ? item.bitrate
+            : undefined,
+        country: typeof item.countrycode === "string" && item.countrycode.length > 0
+            ? item.countrycode
+            : undefined,
+    };
+};
+/** Searches radio-browser.info by station name, most popular first. */
+const searchRadioBrowser = async (query, fetchFn = (input, init) => fetch(input, init), limit = 12) => {
+    const params = new URLSearchParams({
+        name: query.trim(),
+        limit: String(limit),
+        hidebroken: "true",
+        order: "clickcount",
+        reverse: "true",
+    });
+    let lastError;
+    for (const mirror of MIRRORS) {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+        try {
+            const response = await fetchFn(`${mirror}/json/stations/search?${params.toString()}`, { signal: controller.signal });
+            if (!response.ok) {
+                throw new Error(`Radio Browser responded with ${response.status}`);
+            }
+            const data = await response.json();
+            if (!Array.isArray(data)) {
+                throw new Error("Unexpected Radio Browser response");
+            }
+            const seen = new Set();
+            return data
+                .map(toRadioBrowserResult)
+                .filter((item) => {
+                if (!item || seen.has(item.url)) {
+                    return false;
+                }
+                seen.add(item.url);
+                return true;
+            });
+        }
+        catch (error) {
+            lastError = error;
+        }
+        finally {
+            clearTimeout(timer);
+        }
+    }
+    throw lastError instanceof Error
+        ? lastError
+        : new Error("Radio Browser is not reachable");
+};
+
+const FAVORITE_TYPE = "favorite_item_id";
 const GENERAL_SCHEMA = [
     {
         name: "title",
@@ -420,18 +787,33 @@ const GENERAL_SCHEMA = [
         },
     },
 ];
-const GENERAL_LABELS = {
-    title: "Card title",
-    master_entity: "Default master speaker",
-};
 class SonosRadioCardEditor extends i$1 {
     constructor() {
         super(...arguments);
-        this._computeLabel = (schema) => GENERAL_LABELS[schema.name] ?? schema.name;
+        this._favorites = [];
+        this._favoritesState = "idle";
+        this._searchQuery = "";
+        this._searchState = "idle";
+        this._searchResults = [];
+        this._searchRun = 0;
+        this._computeLabel = (schema) => schema.name === "title"
+            ? this._t("editor.title")
+            : schema.name === "master_entity"
+                ? this._t("editor.master")
+                : schema.name;
         this._computeHelper = (schema) => schema.name === "master_entity"
-            ? "Leave empty to automatically detect the current Sonos group master."
+            ? this._t("editor.master_helper")
             : undefined;
     }
+    static { this.properties = {
+        _config: { state: true },
+        _favorites: { state: true },
+        _favoritesState: { state: true },
+        _searchQuery: { state: true },
+        _searchState: { state: true },
+        _searchResults: { state: true },
+        _browser: { state: true },
+    }; }
     static { this.styles = i$4 `
     :host {
       display: block;
@@ -447,7 +829,8 @@ class SonosRadioCardEditor extends i$1 {
       gap: 16px;
     }
 
-    h3 {
+    h3,
+    h4 {
       margin: 0;
     }
 
@@ -460,7 +843,8 @@ class SonosRadioCardEditor extends i$1 {
     }
 
     .item-header,
-    .item-actions {
+    .item-actions,
+    .with-action {
       display: flex;
       align-items: center;
       gap: 8px;
@@ -472,6 +856,11 @@ class SonosRadioCardEditor extends i$1 {
 
     .item-actions {
       justify-content: flex-end;
+    }
+
+    .with-action > :first-child {
+      flex: 1;
+      min-width: 0;
     }
 
     .fields {
@@ -487,6 +876,91 @@ class SonosRadioCardEditor extends i$1 {
 
     .helper.warning {
       color: var(--warning-color, #ffa600);
+    }
+
+    .results,
+    .browser-list {
+      display: grid;
+      gap: 4px;
+      margin: 0;
+      padding: 0;
+      list-style: none;
+    }
+
+    .result,
+    .browser-item {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 48px;
+      padding: 4px 8px;
+      border-radius: var(--ha-border-radius-sm, 6px);
+    }
+
+    .result:hover,
+    .browser-item:hover {
+      background: var(--secondary-background-color);
+    }
+
+    .result-logo,
+    .browser-thumb {
+      flex: none;
+      width: 40px;
+      height: 40px;
+      border-radius: 6px;
+      object-fit: contain;
+      background: var(--secondary-background-color);
+      color: var(--secondary-text-color);
+      --mdc-icon-size: 24px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .result-text {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .result-name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .browser {
+      display: grid;
+      gap: 8px;
+      padding: 8px;
+      border: 1px solid var(--divider-color);
+      border-radius: var(--ha-border-radius-md, 8px);
+    }
+
+    .browser-header {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .browser-title {
+      flex: 1;
+      min-width: 0;
+      overflow: hidden;
+      font-weight: 500;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .browser-item {
+      width: 100%;
+      border: none;
+      background: none;
+      color: var(--primary-text-color);
+      font: inherit;
+      text-align: left;
+      cursor: pointer;
     }
 
     @media (max-width: 600px) {
@@ -509,6 +983,20 @@ class SonosRadioCardEditor extends i$1 {
     }
     get hass() {
         return this._hass;
+    }
+    get _t() {
+        const language = languageOf(this._hass);
+        if (!this._translator || this._translator.language !== language) {
+            this._translator = { language, t: createTranslator(language) };
+        }
+        return this._translator.t;
+    }
+    willUpdate(_changed) {
+        if (this._favoritesState === "idle" &&
+            this._hass &&
+            this._config?.stations.some((station) => station.media_content_type === FAVORITE_TYPE)) {
+            void this._loadFavorites();
+        }
     }
     _generalChanged(event) {
         if (!this._config) {
@@ -562,35 +1050,27 @@ class SonosRadioCardEditor extends i$1 {
             stations: this._config.stations.map((station, itemIndex) => itemIndex === index ? { ...station, ...updates } : station),
         });
     }
-    _moveSpeaker(index, offset) {
-        if (!this._config) {
-            return;
-        }
-        const speakers = [...this._config.speakers];
+    _move(items, index, offset) {
         const targetIndex = index + offset;
-        if (targetIndex < 0 || targetIndex >= speakers.length) {
-            return;
+        if (targetIndex < 0 || targetIndex >= items.length) {
+            return undefined;
         }
-        [speakers[index], speakers[targetIndex]] = [
-            speakers[targetIndex],
-            speakers[index],
-        ];
-        this._updateConfig({ ...this._config, speakers });
+        const moved = [...items];
+        [moved[index], moved[targetIndex]] = [moved[targetIndex], moved[index]];
+        return moved;
+    }
+    _moveSpeaker(index, offset) {
+        const speakers = this._config && this._move(this._config.speakers, index, offset);
+        if (this._config && speakers) {
+            this._updateConfig({ ...this._config, speakers });
+        }
     }
     _moveStation(index, offset) {
-        if (!this._config) {
-            return;
+        const stations = this._config && this._move(this._config.stations, index, offset);
+        if (this._config && stations) {
+            this._browser = undefined;
+            this._updateConfig({ ...this._config, stations });
         }
-        const stations = [...this._config.stations];
-        const targetIndex = index + offset;
-        if (targetIndex < 0 || targetIndex >= stations.length) {
-            return;
-        }
-        [stations[index], stations[targetIndex]] = [
-            stations[targetIndex],
-            stations[index],
-        ];
-        this._updateConfig({ ...this._config, stations });
     }
     _addSpeaker() {
         if (!this._config) {
@@ -610,7 +1090,7 @@ class SonosRadioCardEditor extends i$1 {
             speakers: this._config.speakers.filter((_, itemIndex) => itemIndex !== index),
         });
     }
-    _addStation() {
+    _addStation(station) {
         if (!this._config) {
             return;
         }
@@ -618,7 +1098,7 @@ class SonosRadioCardEditor extends i$1 {
             ...this._config,
             stations: [
                 ...this._config.stations,
-                { name: "", media_content_id: "", media_content_type: "music" },
+                station ?? { name: "", media_content_id: "", media_content_type: "music" },
             ],
         });
     }
@@ -626,20 +1106,132 @@ class SonosRadioCardEditor extends i$1 {
         if (!this._config) {
             return;
         }
+        this._browser = undefined;
         this._updateConfig({
             ...this._config,
             stations: this._config.stations.filter((_, itemIndex) => itemIndex !== index),
         });
     }
+    _favoriteEntities() {
+        const config = this._config;
+        if (!config) {
+            return [];
+        }
+        return [
+            ...new Set([config.master_entity ?? "", ...config.speakers.map((s) => s.entity)].filter((id) => id.startsWith("media_player."))),
+        ];
+    }
+    async _loadFavorites() {
+        if (!this._hass || this._favoritesState === "loading") {
+            return;
+        }
+        this._favoritesState = "loading";
+        try {
+            this._favorites = await loadSonosFavorites(this._hass, this._favoriteEntities());
+            this._favoritesState = "done";
+        }
+        catch {
+            this._favorites = [];
+            this._favoritesState = "error";
+        }
+    }
+    _pickFavorite(index, id) {
+        const station = this._config?.stations[index];
+        const favorite = this._favorites.find((item) => item.id === id);
+        if (!station || !favorite || station.media_content_id === id) {
+            return;
+        }
+        this._updateStation(index, {
+            media_content_id: favorite.id,
+            name: station.name || favorite.title,
+            logo: station.logo || favorite.thumbnail,
+        });
+    }
+    async _search() {
+        const query = this._searchQuery.trim();
+        if (!query) {
+            return;
+        }
+        const run = ++this._searchRun;
+        this._searchState = "loading";
+        try {
+            const results = await searchRadioBrowser(query);
+            if (run === this._searchRun) {
+                this._searchResults = results;
+                this._searchState = "done";
+            }
+        }
+        catch {
+            if (run === this._searchRun) {
+                this._searchResults = [];
+                this._searchState = "error";
+            }
+        }
+    }
+    _searchKeydown(event) {
+        if (event.key === "Enter") {
+            event.preventDefault();
+            void this._search();
+        }
+    }
+    _addResult(result) {
+        this._addStation({
+            name: result.name,
+            media_content_id: result.url,
+            media_content_type: "music",
+            ...(result.favicon ? { logo: result.favicon } : {}),
+        });
+    }
+    async _browse(index, item) {
+        const hass = this._hass;
+        if (!hass) {
+            return;
+        }
+        const stack = item && this._browser?.index === index ? this._browser.stack : [];
+        this._browser = { index, stack, state: "loading" };
+        try {
+            const result = await browseMediaSource(hass, item?.media_content_id);
+            if (this._browser?.index === index) {
+                this._browser = { index, stack: [...stack, result], state: "done" };
+            }
+        }
+        catch {
+            if (this._browser?.index === index) {
+                this._browser = { index, stack, state: "error" };
+            }
+        }
+    }
+    _browseBack() {
+        if (this._browser && this._browser.stack.length > 1) {
+            this._browser = {
+                ...this._browser,
+                stack: this._browser.stack.slice(0, -1),
+                state: "done",
+            };
+        }
+    }
+    _toggleBrowser(index) {
+        if (this._browser?.index === index) {
+            this._browser = undefined;
+        }
+        else {
+            void this._browse(index);
+        }
+    }
+    _pickLogo(index, item) {
+        this._browser = undefined;
+        this._updateStation(index, { logo: item.media_content_id });
+    }
     render() {
         const config = this._config;
         if (!config) {
-            return b ``;
+            return A;
         }
+        const t = this._t;
         return b `
       <div class="editor">
         <section class="section">
-          <h3>General and speakers</h3>
+          <h3>${t("editor.general")}</h3>
           <ha-form
             .hass=${this._hass}
             .data=${{
@@ -653,153 +1245,328 @@ class SonosRadioCardEditor extends i$1 {
           ></ha-form>
 
           <div class="section">
-            <h4>Sonos speakers</h4>
-            ${config.speakers.map((speaker, index) => b `
-                <div class="item">
-                  <div class="item-header">
-                    <strong>Speaker ${index + 1}</strong>
-                    <div class="item-actions">
-                      <ha-icon-button
-                        .label=${"Move speaker up"}
-                        .disabled=${index === 0}
-                        @click=${() => this._moveSpeaker(index, -1)}
-                      >
-                        <ha-icon icon="mdi:arrow-up"></ha-icon>
-                      </ha-icon-button>
-                      <ha-icon-button
-                        .label=${"Move speaker down"}
-                        .disabled=${index === config.speakers.length - 1}
-                        @click=${() => this._moveSpeaker(index, 1)}
-                      >
-                        <ha-icon icon="mdi:arrow-down"></ha-icon>
-                      </ha-icon-button>
-                      <ha-icon-button
-                        .label=${"Remove speaker"}
-                        @click=${() => this._removeSpeaker(index)}
-                      >
-                        <ha-icon icon="mdi:delete-outline"></ha-icon>
-                      </ha-icon-button>
-                    </div>
-                  </div>
-                  <ha-entity-picker
-                    .hass=${this._hass}
-                    .value=${speaker.entity}
-                    .includeDomains=${["media_player"]}
-                    .label=${"Speaker entity"}
-                    @value-changed=${(event) => this._updateSpeaker(index, {
-            entity: this._eventValue(event),
-        })}
-                  ></ha-entity-picker>
-                  <div class="fields">
-                    <ha-textfield
-                      .label=${"Display name"}
-                      .value=${speaker.name ?? ""}
-                      @input=${(event) => this._updateSpeaker(index, {
-            name: this._optionalString(this._eventValue(event)),
-        })}
-                    ></ha-textfield>
-                    <ha-icon-picker
-                      .label=${"Icon"}
-                      .value=${speaker.icon ?? ""}
-                      @value-changed=${(event) => this._updateSpeaker(index, {
-            icon: this._optionalString(this._eventValue(event)),
-        })}
-                    ></ha-icon-picker>
-                  </div>
-                </div>
-              `)}
-            <ha-button @click=${this._addSpeaker}>Add speaker</ha-button>
+            <h4>${t("editor.speakers")}</h4>
+            ${config.speakers.map((speaker, index) => this._renderSpeaker(speaker, index, config.speakers.length))}
+            <ha-button @click=${() => this._addSpeaker()}>
+              ${t("editor.add_speaker")}
+            </ha-button>
           </div>
         </section>
 
         <section class="section">
-          <h3>Radio stations</h3>
-          ${config.stations.map((station, index) => b `
-              <div class="item">
-                <div class="item-header">
-                  <strong>Station ${index + 1}</strong>
-                  <div class="item-actions">
-                    <ha-icon-button
-                      .label=${"Move station up"}
-                      .disabled=${index === 0}
-                      @click=${() => this._moveStation(index, -1)}
-                    >
-                      <ha-icon icon="mdi:arrow-up"></ha-icon>
-                    </ha-icon-button>
-                    <ha-icon-button
-                      .label=${"Move station down"}
-                      .disabled=${index === config.stations.length - 1}
-                      @click=${() => this._moveStation(index, 1)}
-                    >
-                      <ha-icon icon="mdi:arrow-down"></ha-icon>
-                    </ha-icon-button>
-                    <ha-icon-button
-                      .label=${"Remove station"}
-                      @click=${() => this._removeStation(index)}
-                    >
-                      <ha-icon icon="mdi:delete-outline"></ha-icon>
-                    </ha-icon-button>
-                  </div>
-                </div>
-                <div class="fields">
-                  <ha-textfield
-                    .label=${"Station name"}
-                    .value=${station.name}
-                    @input=${(event) => this._updateStation(index, {
-            name: this._eventValue(event),
+          <h3>${t("editor.stations")}</h3>
+          ${config.stations.map((station, index) => this._renderStation(station, index, config.stations.length))}
+          <ha-button @click=${() => this._addStation()}>
+            ${t("editor.add_station")}
+          </ha-button>
+          ${this._renderSearch()}
+        </section>
+      </div>
+    `;
+    }
+    _renderSpeaker(speaker, index, count) {
+        const t = this._t;
+        return b `
+      <div class="item">
+        <div class="item-header">
+          <strong>${t("editor.speaker_n", { n: index + 1 })}</strong>
+          <div class="item-actions">
+            <ha-icon-button
+              .label=${t("editor.speaker_up")}
+              .disabled=${index === 0}
+              @click=${() => this._moveSpeaker(index, -1)}
+            >
+              <ha-icon icon="mdi:arrow-up"></ha-icon>
+            </ha-icon-button>
+            <ha-icon-button
+              .label=${t("editor.speaker_down")}
+              .disabled=${index === count - 1}
+              @click=${() => this._moveSpeaker(index, 1)}
+            >
+              <ha-icon icon="mdi:arrow-down"></ha-icon>
+            </ha-icon-button>
+            <ha-icon-button
+              .label=${t("editor.speaker_remove")}
+              @click=${() => this._removeSpeaker(index)}
+            >
+              <ha-icon icon="mdi:delete-outline"></ha-icon>
+            </ha-icon-button>
+          </div>
+        </div>
+        <ha-entity-picker
+          .hass=${this._hass}
+          .value=${speaker.entity}
+          .includeDomains=${["media_player"]}
+          .label=${t("editor.speaker_entity")}
+          @value-changed=${(event) => this._updateSpeaker(index, { entity: this._eventValue(event) })}
+        ></ha-entity-picker>
+        <div class="fields">
+          <ha-textfield
+            .label=${t("editor.display_name")}
+            .value=${speaker.name ?? ""}
+            @input=${(event) => this._updateSpeaker(index, {
+            name: this._optionalString(this._eventValue(event)),
         })}
-                  ></ha-textfield>
-                  <ha-select
-                    .label=${"Media content type"}
-                    .value=${station.media_content_type}
-                    .options=${[
-            {
-                value: "music",
-                label: "Stream URL (music / Radio Browser)",
-            },
-            {
-                value: "favorite_item_id",
-                label: "Sonos favorite",
-            },
+          ></ha-textfield>
+          <ha-icon-picker
+            .label=${t("editor.icon")}
+            .value=${speaker.icon ?? ""}
+            @value-changed=${(event) => this._updateSpeaker(index, {
+            icon: this._optionalString(this._eventValue(event)),
+        })}
+          ></ha-icon-picker>
+        </div>
+      </div>
+    `;
+    }
+    _renderStation(station, index, count) {
+        const t = this._t;
+        const isFavorite = station.media_content_type === FAVORITE_TYPE;
+        const issue = station.media_content_id
+            ? stationIssue(station, t)
+            : undefined;
+        return b `
+      <div class="item station">
+        <div class="item-header">
+          <strong>${t("editor.station_n", { n: index + 1 })}</strong>
+          <div class="item-actions">
+            <ha-icon-button
+              .label=${t("editor.station_up")}
+              .disabled=${index === 0}
+              @click=${() => this._moveStation(index, -1)}
+            >
+              <ha-icon icon="mdi:arrow-up"></ha-icon>
+            </ha-icon-button>
+            <ha-icon-button
+              .label=${t("editor.station_down")}
+              .disabled=${index === count - 1}
+              @click=${() => this._moveStation(index, 1)}
+            >
+              <ha-icon icon="mdi:arrow-down"></ha-icon>
+            </ha-icon-button>
+            <ha-icon-button
+              .label=${t("editor.station_remove")}
+              @click=${() => this._removeStation(index)}
+            >
+              <ha-icon icon="mdi:delete-outline"></ha-icon>
+            </ha-icon-button>
+          </div>
+        </div>
+        <div class="fields">
+          <ha-textfield
+            .label=${t("editor.station_name")}
+            .value=${station.name}
+            @input=${(event) => this._updateStation(index, { name: this._eventValue(event) })}
+          ></ha-textfield>
+          <ha-select
+            .label=${t("editor.content_type")}
+            .value=${station.media_content_type}
+            .options=${[
+            { value: "music", label: t("editor.type_music") },
+            { value: FAVORITE_TYPE, label: t("editor.type_favorite") },
         ]}
-                    @selected=${(event) => this._updateStation(index, {
-            media_content_type: this._eventValue(event),
-        })}
-                  ></ha-select>
-                </div>
-                <ha-textfield
-                  .label=${"Stream URL / media content ID"}
-                  .value=${station.media_content_id}
-                  .placeholder=${"https://... or Sonos favorite ID"}
-                  @input=${(event) => this._updateStation(index, {
+            @selected=${(event) => {
+            const type = this._eventValue(event);
+            if (type && type !== station.media_content_type) {
+                this._updateStation(index, { media_content_type: type });
+            }
+        }}
+          ></ha-select>
+        </div>
+        ${isFavorite ? this._renderFavoritePicker(station, index) : A}
+        <ha-textfield
+          .label=${t("editor.content_id")}
+          .value=${station.media_content_id}
+          .placeholder=${t("editor.content_id_placeholder")}
+          @input=${(event) => this._updateStation(index, {
             media_content_id: this._eventValue(event),
         })}
-                ></ha-textfield>
-                <ha-textfield
-                  .label=${"Logo URL or media-source"}
-                  .value=${station.logo ?? ""}
-                  .placeholder=${"https://... or media-source://..."}
-                  @input=${(event) => this._updateStation(index, {
+        ></ha-textfield>
+        <div class="with-action">
+          <ha-textfield
+            .label=${t("editor.logo")}
+            .value=${station.logo ?? ""}
+            .placeholder=${t("editor.logo_placeholder")}
+            @input=${(event) => this._updateStation(index, {
             logo: this._optionalString(this._eventValue(event)),
         })}
-                ></ha-textfield>
-                ${station.media_content_type === "favorite_item_id"
-            ? b `<div class="helper">
-                      Enter the Sonos favorite ID as the media content ID.
-                    </div>`
-            : b `<div class="helper">
-                      Radio Browser stations use their stream URL with the
-                      “music” media content type.
-                    </div>`}
-                ${station.media_content_id && stationIssue(station)
-            ? b `<div class="helper warning" role="status">
-                      ${stationIssue(station)}
-                    </div>`
+          ></ha-textfield>
+          <ha-icon-button
+            class="browse-logo"
+            .label=${t("editor.browse_logo")}
+            .disabled=${!this._hass}
+            @click=${() => this._toggleBrowser(index)}
+          >
+            <ha-icon icon="mdi:image-search-outline"></ha-icon>
+          </ha-icon-button>
+        </div>
+        ${this._browser?.index === index ? this._renderBrowser(index) : A}
+        <div class="helper">
+          ${isFavorite ? t("editor.helper_favorite") : t("editor.helper_music")}
+        </div>
+        ${issue
+            ? b `<div class="helper warning" role="status">${issue}</div>`
             : A}
-              </div>
-            `)}
-          <ha-button @click=${this._addStation}>Add station</ha-button>
-        </section>
+      </div>
+    `;
+    }
+    _renderFavoritePicker(station, index) {
+        const t = this._t;
+        if (this._favoritesState === "loading" || this._favoritesState === "idle") {
+            return b `<div class="helper">${t("editor.favorites_loading")}</div>`;
+        }
+        const message = this._favoritesState === "error"
+            ? t("editor.favorites_failed")
+            : this._favorites.length === 0
+                ? t("editor.favorites_empty")
+                : undefined;
+        return b `
+      <div class="with-action">
+        ${message
+            ? b `<div class="helper warning" role="status">${message}</div>`
+            : b `<ha-select
+              class="favorite-select"
+              .label=${t("editor.favorite")}
+              .value=${station.media_content_id}
+              .options=${this._favorites.map((favorite) => ({
+                value: favorite.id,
+                label: favorite.title,
+            }))}
+              @selected=${(event) => this._pickFavorite(index, this._eventValue(event))}
+            ></ha-select>`}
+        <ha-icon-button
+          class="reload-favorites"
+          .label=${t("editor.favorites_reload")}
+          @click=${() => {
+            this._favoritesState = "idle";
+            void this._loadFavorites();
+        }}
+        >
+          <ha-icon icon="mdi:refresh"></ha-icon>
+        </ha-icon-button>
+      </div>
+    `;
+    }
+    _renderBrowser(index) {
+        const t = this._t;
+        const browser = this._browser;
+        const current = browser.stack[browser.stack.length - 1];
+        const children = (current?.children ?? []).filter((item) => item.can_expand || isImage(item));
+        return b `
+      <div class="browser">
+        <div class="browser-header">
+          ${browser.stack.length > 1
+            ? b `<ha-icon-button
+                .label=${t("editor.browse_back")}
+                @click=${() => this._browseBack()}
+              >
+                <ha-icon icon="mdi:arrow-left"></ha-icon>
+              </ha-icon-button>`
+            : A}
+          <span class="browser-title">
+            ${current?.title ?? t("editor.browse_title")}
+          </span>
+          <ha-icon-button
+            .label=${t("editor.browse_close")}
+            @click=${() => (this._browser = undefined)}
+          >
+            <ha-icon icon="mdi:close"></ha-icon>
+          </ha-icon-button>
+        </div>
+        ${browser.state === "loading"
+            ? b `<div class="helper">${t("editor.browse_loading")}</div>`
+            : browser.state === "error"
+                ? b `<div class="helper warning" role="status">
+                ${t("editor.browse_failed")}
+              </div>`
+                : children.length === 0
+                    ? b `<div class="helper">${t("editor.browse_empty")}</div>`
+                    : b `<ul class="browser-list">
+                  ${children.map((item) => b `<li>
+                      <button
+                        class="browser-item"
+                        @click=${() => item.can_expand
+                        ? this._browse(index, item)
+                        : this._pickLogo(index, item)}
+                      >
+                        ${item.thumbnail && /^https?:\/\//i.test(item.thumbnail)
+                        ? b `<img class="browser-thumb" src=${item.thumbnail} alt="" />`
+                        : b `<span class="browser-thumb">
+                              <ha-icon
+                                icon=${item.can_expand ? "mdi:folder" : "mdi:image"}
+                              ></ha-icon>
+                            </span>`}
+                        <span class="result-name">${item.title}</span>
+                      </button>
+                    </li>`)}
+                </ul>`}
+      </div>
+    `;
+    }
+    _renderSearch() {
+        const t = this._t;
+        const added = new Set(this._config?.stations.map((station) => station.media_content_id) ?? []);
+        return b `
+      <div class="section search">
+        <h4>${t("editor.search_title")}</h4>
+        <div class="with-action">
+          <ha-textfield
+            .label=${t("editor.search_label")}
+            .value=${this._searchQuery}
+            @input=${(event) => (this._searchQuery = this._eventValue(event))}
+            @keydown=${this._searchKeydown}
+          ></ha-textfield>
+          <ha-button
+            class="search-button"
+            .disabled=${!this._searchQuery.trim() ||
+            this._searchState === "loading"}
+            @click=${() => this._search()}
+          >
+            ${t("editor.search")}
+          </ha-button>
+        </div>
+        <div class="helper">${t("editor.search_helper")}</div>
+        ${this._searchState === "loading"
+            ? b `<div class="helper">${t("editor.browse_loading")}</div>`
+            : this._searchState === "error"
+                ? b `<div class="helper warning" role="status">
+                ${t("editor.search_failed")}
+              </div>`
+                : this._searchState === "done" && this._searchResults.length === 0
+                    ? b `<div class="helper">${t("editor.search_empty")}</div>`
+                    : A}
+        ${this._searchResults.length > 0
+            ? b `<ul class="results">
+              ${this._searchResults.map((result) => {
+                const isAdded = added.has(result.url);
+                const meta = [
+                    result.codec,
+                    result.bitrate ? `${result.bitrate} kbps` : undefined,
+                    result.country,
+                ]
+                    .filter(Boolean)
+                    .join(" · ");
+                return b `<li class="result">
+                  ${result.favicon
+                    ? b `<img class="result-logo" src=${result.favicon} alt="" />`
+                    : b `<span class="result-logo">
+                        <ha-icon icon="mdi:radio"></ha-icon>
+                      </span>`}
+                  <span class="result-text">
+                    <span class="result-name">${result.name}</span>
+                    <span class="helper">${meta}</span>
+                  </span>
+                  <ha-button
+                    class="add-result"
+                    .disabled=${isAdded}
+                    @click=${() => this._addResult(result)}
+                  >
+                    ${isAdded ? t("editor.search_added") : t("editor.search_add")}
+                  </ha-button>
+                </li>`;
+            })}
+            </ul>`
+            : A}
       </div>
     `;
     }
@@ -809,6 +1576,8 @@ if (!customElements.get("sonos-radio-card-editor")) {
 }
 
 const MEDIA_SOURCE_PREFIX = "media-source://";
+// Unit and component tests load the sources without the Rollup replacement.
+const CARD_VERSION = "0.1.0" ;
 const GROUP_VOLUME_KEY = "__group__";
 const PENDING_TIMEOUT_MS = 10000;
 const VOLUME_THROTTLE_MS = 300;
@@ -840,7 +1609,7 @@ class SonosRadioCard extends i$1 {
         this._drawerOpen = false;
         this._drawerClosing = false;
         this._volume = new VolumeThrottle((key, level) => this._sendVolume(key, level), () => this.requestUpdate(), { intervalMs: VOLUME_THROTTLE_MS, holdMs: VOLUME_HOLD_MS });
-        this._pendingSpeakers = [];
+        this._membershipTargets = {};
         this._logoUrls = {};
         this._brokenLogos = [];
         this._resolvingLogos = new Set();
@@ -865,6 +1634,9 @@ class SonosRadioCard extends i$1 {
             if (event.key === "Escape") {
                 this._closeDrawer();
             }
+            else if (event.key === "Tab") {
+                this._trapFocus(event);
+            }
         };
     }
     static { this.properties = {
@@ -872,7 +1644,7 @@ class SonosRadioCard extends i$1 {
         _drawerOpen: { state: true },
         _drawerClosing: { state: true },
         _pendingStation: { state: true },
-        _pendingSpeakers: { state: true },
+        _membershipTargets: { state: true },
         _coordinatorOverride: { state: true },
         _toast: { state: true },
         _logoUrls: { state: true },
@@ -911,9 +1683,27 @@ class SonosRadioCard extends i$1 {
     static getConfigElement() {
         return document.createElement("sonos-radio-card-editor");
     }
+    /** Height in 50 px units for the masonry view. */
     getCardSize() {
+        const height = this.offsetHeight;
+        if (height > 0) {
+            return Math.max(1, Math.ceil(height / 50));
+        }
+        // Estimate before the first layout: four 150 px tiles per row plus the
+        // control bar and the optional title.
         const rows = Math.ceil((this._config?.stations.length ?? 0) / 4);
-        return 3 + rows * 2;
+        return (this._config?.title ? 1 : 0) + Math.max(rows, 1) * 3 + 2;
+    }
+    /** Size in the sections view: full width by default, height follows content. */
+    getGridOptions() {
+        return { columns: 12, rows: "auto", min_columns: 6 };
+    }
+    get _t() {
+        const language = languageOf(this._hass);
+        if (!this._translator || this._translator.language !== language) {
+            this._translator = { language, t: createTranslator(language) };
+        }
+        return this._translator.t;
     }
     disconnectedCallback() {
         super.disconnectedCallback();
@@ -989,7 +1779,7 @@ class SonosRadioCard extends i$1 {
         }
         catch (error) {
             const detail = errorMessage(error);
-            const prefix = failure ?? `Failed to call media_player.${service}.`;
+            const prefix = failure ?? this._t("card.service_failed", { service });
             this._showToast(detail ? `${prefix} ${detail}` : prefix);
             return false;
         }
@@ -1014,7 +1804,9 @@ class SonosRadioCard extends i$1 {
         // Matching can fail for streams that Sonos renames, so only complain if
         // nothing is playing at all.
         if (stillPending && station && this._coordinator?.state !== "playing") {
-            this._showToast(`${station.name || "The station"} did not start. Check that the stream URL is reachable and uses a format Sonos supports (MP3, AAC or HLS).`, "warning");
+            this._showToast(this._t("card.station_timeout", {
+                name: station.name || this._t("card.the_station"),
+            }), "warning");
         }
     }
     async _playStation(index) {
@@ -1024,7 +1816,10 @@ class SonosRadioCard extends i$1 {
             return;
         }
         if (!station.media_content_id?.trim()) {
-            this._showToast(`${station.name || "This station"}: ${stationIssue(station)} Add it in the card editor.`, "warning");
+            this._showToast(this._t("card.station_not_set_up", {
+                name: station.name || this._t("card.this_station"),
+                issue: stationIssue(station, this._t) ?? "",
+            }), "warning");
             return;
         }
         this._pendingStation = index;
@@ -1034,7 +1829,9 @@ class SonosRadioCard extends i$1 {
             entity_id: entityId,
             media_content_id: station.media_content_id.trim(),
             media_content_type: station.media_content_type || "music",
-        }, `Could not start ${station.name || "the station"}.`);
+        }, this._t("card.station_failed", {
+            name: station.name || this._t("card.the_station"),
+        }));
         if (!played) {
             this._clearPending();
         }
@@ -1078,7 +1875,9 @@ class SonosRadioCard extends i$1 {
         const commands = key === GROUP_VOLUME_KEY
             ? planGroupVolume(this._hass, this._members, level)
             : [{ entity_id: key, volume_level: level }];
-        const results = await Promise.all(commands.map((command) => this._callService("volume_set", { ...command }, `Could not change the volume of ${this._speakerName(command.entity_id)}.`)));
+        const results = await Promise.all(commands.map((command) => this._callService("volume_set", { ...command }, this._t("card.volume_failed", {
+            name: this._speakerName(command.entity_id),
+        }))));
         return results.every(Boolean);
     }
     _waitFor(check, timeoutMs = GROUP_CHANGE_TIMEOUT_MS) {
@@ -1118,10 +1917,10 @@ class SonosRadioCard extends i$1 {
             : undefined;
     }
     async _toggleSpeaker(entityId, join) {
-        if (this._pendingSpeakers.includes(entityId)) {
+        if (entityId in this._membershipTargets) {
             return;
         }
-        this._pendingSpeakers = [...this._pendingSpeakers, entityId];
+        this._membershipTargets = { ...this._membershipTargets, [entityId]: join };
         try {
             if (join) {
                 await this._joinSpeaker(entityId);
@@ -1131,7 +1930,9 @@ class SonosRadioCard extends i$1 {
             }
         }
         finally {
-            this._pendingSpeakers = this._pendingSpeakers.filter((id) => id !== entityId);
+            // Fall back to the real group state: confirmed, reverted or timed out.
+            const { [entityId]: _done, ...rest } = this._membershipTargets;
+            this._membershipTargets = rest;
         }
     }
     async _joinSpeaker(entityId) {
@@ -1139,10 +1940,7 @@ class SonosRadioCard extends i$1 {
         if (!master || master === entityId) {
             return;
         }
-        const joined = await this._callService("join", {
-            entity_id: master,
-            group_members: [entityId],
-        });
+        const joined = await this._callService("join", { entity_id: master, group_members: [entityId] }, this._t("card.join_failed", { name: this._speakerName(entityId) }));
         if (joined) {
             await this._waitFor((hass) => groupMembers(hass, master).includes(entityId));
         }
@@ -1153,7 +1951,7 @@ class SonosRadioCard extends i$1 {
         }
         const plan = planSpeakerRemoval(this._hass, entityId, this._config.speakers.map((speaker) => speaker.entity));
         if (plan.type === "unjoin") {
-            if (await this._callService("unjoin", { entity_id: entityId })) {
+            if (await this._callService("unjoin", { entity_id: entityId }, this._t("card.unjoin_failed", { name: this._speakerName(entityId) }))) {
                 await this._waitFor((hass) => groupMembers(hass, entityId).length <= 1);
             }
         }
@@ -1172,7 +1970,7 @@ class SonosRadioCard extends i$1 {
         const media = this._currentMedia();
         const previousOverride = this._coordinatorOverride;
         this._coordinatorOverride = plan.newMaster;
-        if (!(await this._callService("unjoin", { entity_id: oldMaster }))) {
+        if (!(await this._callService("unjoin", { entity_id: oldMaster }, this._t("card.unjoin_failed", { name: this._speakerName(oldMaster) })))) {
             this._coordinatorOverride = previousOverride;
             return;
         }
@@ -1207,6 +2005,27 @@ class SonosRadioCard extends i$1 {
     }
     get _drawerElement() {
         return this.renderRoot.querySelector(".drawer");
+    }
+    /** Keeps keyboard focus inside the open drawer (modal dialog). */
+    _trapFocus(event) {
+        const focusable = [
+            ...(this._drawerElement?.querySelectorAll("button, input, ha-switch") ?? []),
+        ].filter((element) => !element.disabled);
+        if (focusable.length === 0) {
+            return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = this.shadowRoot?.activeElement;
+        const inside = focusable.some((element) => element === active);
+        if (event.shiftKey && (active === first || !inside)) {
+            event.preventDefault();
+            last.focus();
+        }
+        else if (!event.shiftKey && (active === last || !inside)) {
+            event.preventDefault();
+            first.focus();
+        }
     }
     _swipeStart(event) {
         if (!event.isPrimary ||
@@ -1320,21 +2139,23 @@ class SonosRadioCard extends i$1 {
         const available = isAvailable(coordinator);
         const activeIndex = this._activeStationIndex();
         const notices = this._hass
-            ? collectNotices(this._hass, this._config, this._coordinatorId, (id) => this._speakerName(id))
+            ? collectNotices(this._hass, this._config, this._coordinatorId, (id) => this._speakerName(id), this._t)
             : [];
         return b `
       <ha-card class=${this._drawerOpen ? "drawer-open" : ""}>
-        ${this._config.title
+        <div class="content" ?inert=${this._drawerOpen}>
+          ${this._config.title
             ? b `<h1 class="card-header">${this._config.title}</h1>`
             : A}
-        ${notices.length > 0
+          ${notices.length > 0
             ? b `<div class="notices">
-              ${notices.map((notice) => this._renderNotice(notice))}
-            </div>`
+                ${notices.map((notice) => this._renderNotice(notice))}
+              </div>`
             : A}
-        ${this._renderStations(activeIndex, available)}
-        ${this._renderControls(coordinator, activeIndex, available)}
-        ${this._toast ? this._renderNotice(this._toast, true) : A}
+          ${this._renderStations(activeIndex, available)}
+          ${this._renderControls(coordinator, activeIndex, available)}
+          ${this._toast ? this._renderNotice(this._toast, true) : A}
+        </div>
         ${this._renderDrawer()}
       </ha-card>
     `;
@@ -1350,7 +2171,7 @@ class SonosRadioCard extends i$1 {
         ${dismissible
             ? b `<button
               class="round small dismiss"
-              aria-label="Dismiss"
+              aria-label=${this._t("card.dismiss")}
               @click=${this._dismissToast}
             >
               <ha-icon icon="mdi:close"></ha-icon>
@@ -1364,11 +2185,8 @@ class SonosRadioCard extends i$1 {
         if (stations.length === 0) {
             return b `<div class="empty">
         <ha-icon icon="mdi:radio-off"></ha-icon>
-        <div class="empty-title">No radio stations yet</div>
-        <div class="secondary">
-          Edit the card and add stations with a stream URL or a Sonos
-          favorite.
-        </div>
+        <div class="empty-title">${this._t("card.empty_title")}</div>
+        <div class="secondary">${this._t("card.empty_text")}</div>
       </div>`;
         }
         const playing = this._coordinator?.state === "playing";
@@ -1378,7 +2196,7 @@ class SonosRadioCard extends i$1 {
             const active = index === activeIndex;
             const pending = index === this._pendingStation && !active;
             const logo = this._logoUrl(station);
-            const issue = stationIssue(station);
+            const issue = stationIssue(station, this._t);
             return b `
             <button
               class="station ${active ? "active" : ""} ${pending
@@ -1399,25 +2217,25 @@ class SonosRadioCard extends i$1 {
                     />`
                 : b `<ha-icon icon="mdi:radio"></ha-icon>`}
               </div>
-              <span class="station-name">${station.name || "Unnamed"}</span>
+              <span class="station-name">${station.name || this._t("card.unnamed")}</span>
               ${active
                 ? b `<span class="badge">
                     <ha-icon
                       icon=${playing ? "mdi:equalizer" : "mdi:pause"}
                     ></ha-icon>
-                    ${playing ? "Playing" : "Paused"}
+                    ${playing ? this._t("card.playing") : this._t("card.paused")}
                   </span>`
                 : pending
                     ? b `<span class="badge">
                       <ha-icon icon="mdi:loading"></ha-icon>
-                      Starting
+                      ${this._t("card.starting")}
                     </span>`
                     : issue
                         ? b `<span class="badge warning">
                         <ha-icon icon="mdi:alert-outline"></ha-icon>
                         ${station.media_content_id?.trim()
-                            ? "Check URL"
-                            : "Not set up"}
+                            ? this._t("card.check_url")
+                            : this._t("card.not_set_up")}
                       </span>`
                         : A}
             </button>
@@ -1447,15 +2265,15 @@ class SonosRadioCard extends i$1 {
             channel ??
             title ??
             (unknownStream
-                ? "Unknown stream"
+                ? this._t("card.unknown_stream")
                 : available
-                    ? "Nothing playing"
+                    ? this._t("card.nothing_playing")
                     : this._coordinatorId
-                        ? "Speaker unavailable"
-                        : "No speaker configured");
+                        ? this._t("card.speaker_unavailable")
+                        : this._t("card.no_speaker_configured"));
         const secondary = [
             unknownStream && config.stations.length > 0
-                ? "Not in your station list"
+                ? this._t("card.not_in_station_list")
                 : undefined,
             artist,
             title,
@@ -1470,7 +2288,7 @@ class SonosRadioCard extends i$1 {
             ? members.length > 1
                 ? `${coordinatorName} + ${members.length - 1}`
                 : coordinatorName
-            : "No speaker";
+            : this._t("card.no_speaker");
         return b `
       <div class="controls">
         <div class="now-playing">
@@ -1483,7 +2301,7 @@ class SonosRadioCard extends i$1 {
         <div class="transport">
           <button
             class="round primary"
-            aria-label=${playing ? "Pause" : "Play"}
+            aria-label=${playing ? this._t("card.pause") : this._t("card.play")}
             ?disabled=${!available}
             @click=${this._playPause}
           >
@@ -1491,7 +2309,7 @@ class SonosRadioCard extends i$1 {
           </button>
           <button
             class="round"
-            aria-label="Stop"
+            aria-label=${this._t("card.stop")}
             ?disabled=${!available}
             @click=${this._stop}
           >
@@ -1499,18 +2317,18 @@ class SonosRadioCard extends i$1 {
           </button>
         </div>
 
-        ${this._renderVolume(GROUP_VOLUME_KEY, groupVolumeLevel, "Group volume", !available)}
+        ${this._renderVolume(GROUP_VOLUME_KEY, groupVolumeLevel, this._t("card.group_volume"), !available)}
 
         <button
           class="multiroom"
-          aria-label="Multiroom"
+          aria-label=${this._t("card.multiroom")}
           aria-haspopup="dialog"
           aria-expanded=${this._drawerOpen ? "true" : "false"}
           ?disabled=${config.speakers.length === 0}
           @click=${this._openDrawer}
         >
           <ha-icon icon="mdi:speaker-multiple"></ha-icon>
-          <span class="multiroom-label">Multiroom</span>
+          <span class="multiroom-label">${this._t("card.multiroom")}</span>
           ${members.length > 1
             ? b `<span class="count">${members.length}</span>`
             : A}
@@ -1569,14 +2387,18 @@ class SonosRadioCard extends i$1 {
       >
         <div class="drawer-header">
           <div class="drawer-heading">
-            <span class="drawer-eyebrow">Group speakers</span>
+            <span class="drawer-eyebrow"
+              >${this._t("card.group_speakers")}</span
+            >
             <h2 id="drawer-title">
-              ${groupName ? `Sonos group: ${groupName}` : "No active group"}
+              ${groupName
+            ? this._t("card.sonos_group", { name: groupName })
+            : this._t("card.no_active_group")}
             </h2>
           </div>
           <button
             class="round small close"
-            aria-label="Close"
+            aria-label=${this._t("card.close")}
             @click=${this._closeDrawer}
           >
             <ha-icon icon="mdi:close"></ha-icon>
@@ -1592,27 +2414,30 @@ class SonosRadioCard extends i$1 {
         const entityId = speaker.entity;
         const entity = this._hass?.states[entityId];
         const available = isAvailable(entity);
-        const inGroup = members.has(entityId);
+        const target = this._membershipTargets[entityId];
+        const pending = target !== undefined;
+        // Show the requested state right away; Sonos takes a moment to regroup.
+        const inGroup = target ?? members.has(entityId);
         const isMaster = entityId === coordinatorId;
-        const pending = this._pendingSpeakers.includes(entityId);
-        const soleMember = inGroup && memberCount <= 1;
+        const soleMember = members.has(entityId) && memberCount <= 1;
         const name = this._speakerName(entityId, speaker);
         const volume = entity?.attributes.volume_level;
+        const t = this._t;
         const status = !entity
-            ? "Not found in Home Assistant"
+            ? t("room.not_found")
             : !available
-                ? "Unavailable – check power and network"
+                ? t("room.unavailable")
                 : pending
                     ? inGroup
-                        ? "Leaving group…"
-                        : "Joining group…"
+                        ? t("room.joining")
+                        : t("room.leaving")
                     : isMaster
                         ? soleMember
-                            ? "Master · only room in group"
-                            : "Group master"
+                            ? t("room.master_only")
+                            : t("room.master")
                         : inGroup
-                            ? "In group"
-                            : "Not in group";
+                            ? t("room.in_group")
+                            : t("room.not_in_group");
         return b `
       <li
         class="room ${inGroup ? "in-group" : ""} ${available
@@ -1631,11 +2456,11 @@ class SonosRadioCard extends i$1 {
           <ha-switch
             .checked=${l(inGroup)}
             .disabled=${!available || pending || soleMember || !coordinatorId}
-            aria-label=${`${name} in group`}
+            aria-label=${t("card.room_in_group", { name })}
             @change=${(event) => this._toggleSpeaker(entityId, event.target.checked)}
           ></ha-switch>
         </div>
-        ${this._renderVolume(entityId, typeof volume === "number" ? volume : undefined, `${name} volume`, !available)}
+        ${this._renderVolume(entityId, typeof volume === "number" ? volume : undefined, t("card.room_volume", { name }), !available)}
       </li>
     `;
     }
@@ -2226,13 +3051,14 @@ class SonosRadioCard extends i$1 {
 }
 if (!customElements.get("sonos-radio-card")) {
     customElements.define("sonos-radio-card", SonosRadioCard);
+    console.info(`%c SONOS-RADIO-CARD %c ${CARD_VERSION} `, "color: #fff; background: #03a9f4; font-weight: 700;", "color: #03a9f4; background: #fff; font-weight: 700;");
 }
 window.customCards = window.customCards ?? [];
 if (!window.customCards.some((card) => card.type === "sonos-radio-card")) {
     window.customCards.push({
         type: "sonos-radio-card",
         name: "Sonos Radio Card",
-        description: "Control Sonos speakers and radio stations.",
+        description: createTranslator(navigator.language)("card.description"),
         preview: false,
     });
 }

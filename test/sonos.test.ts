@@ -9,12 +9,15 @@ import {
   resolveCoordinator,
   stationIssue,
 } from "../src/sonos.ts";
+import { createTranslator } from "../src/localize.ts";
 import type {
   HassEntity,
   HomeAssistant,
   SonosRadioCardConfig,
   SonosStationConfig,
 } from "../src/types.ts";
+
+const t = createTranslator("en");
 
 const entity = (
   entity_id: string,
@@ -205,15 +208,15 @@ test("stationIssue flags missing and malformed stream IDs", () => {
     media_content_id,
     media_content_type,
   });
-  assert.equal(stationIssue(station("https://stream.example.com/a.mp3")), undefined);
-  assert.equal(stationIssue(station("x-rincon-mp3radio://example.com/a")), undefined);
-  assert.equal(stationIssue(station('plex://{ "library_name": "Music" }')), undefined);
-  assert.equal(stationIssue(station("FV:2/12", "favorite_item_id")), undefined);
-  assert.match(stationIssue(station(""))!, /No stream URL/);
-  assert.match(stationIssue(station("stream.example.com/a"))!, /http/);
-  assert.match(stationIssue(station("https://example.com/a b"))!, /spaces/);
+  assert.equal(stationIssue(station("https://stream.example.com/a.mp3"), t), undefined);
+  assert.equal(stationIssue(station("x-rincon-mp3radio://example.com/a"), t), undefined);
+  assert.equal(stationIssue(station('plex://{ "library_name": "Music" }'), t), undefined);
+  assert.equal(stationIssue(station("FV:2/12", "favorite_item_id"), t), undefined);
+  assert.match(stationIssue(station(""), t)!, /No stream URL/);
+  assert.match(stationIssue(station("stream.example.com/a"), t)!, /http/);
+  assert.match(stationIssue(station("https://example.com/a b"), t)!, /spaces/);
   assert.match(
-    stationIssue(station("https://example.com/a", "favorite_item_id"))!,
+    stationIssue(station("https://example.com/a", "favorite_item_id"), t)!,
     /looks like a URL/,
   );
 });
@@ -221,13 +224,14 @@ test("stationIssue flags missing and malformed stream IDs", () => {
 test("collectNotices explains configuration and availability problems", () => {
   const name = (id: string) => id;
   const empty = config({ speakers: [] });
-  assert.equal(collectNotices(hassWith(), empty, undefined, name)[0].level, "error");
+  assert.equal(collectNotices(hassWith(), empty, undefined, name, t)[0].level, "error");
 
   const missing = collectNotices(
     hassWith(entity("media_player.kitchen", "idle")),
     config(),
     "media_player.kitchen",
     name,
+    t,
   );
   assert.deepEqual(
     missing.map((notice) => notice.level),
@@ -243,6 +247,7 @@ test("collectNotices explains configuration and availability problems", () => {
     config(),
     "media_player.kitchen",
     name,
+    t,
   );
   assert.match(down[0].message, /All Sonos speakers are unavailable/);
 
@@ -254,6 +259,15 @@ test("collectNotices explains configuration and availability problems", () => {
     config({ master_entity: "media_player.living" }),
     "media_player.kitchen",
     name,
+    t,
   );
   assert.deepEqual(fallback.map((notice) => notice.level), ["info"]);
+});
+
+test("createTranslator localizes with English fallback", () => {
+  const german = createTranslator("de-AT");
+  assert.equal(german("card.stop"), "Stopp");
+  assert.equal(german("card.sonos_group", { name: "K?che" }), "Sonos-Gruppe: K?che");
+  assert.equal(createTranslator("fr")("card.stop"), "Stop");
+  assert.match(stationIssue({ name: "A", media_content_id: "", media_content_type: "music" }, german)!, /Keine Stream-URL/);
 });
