@@ -4,6 +4,10 @@ A touch-friendly Home Assistant Lovelace card for playing radio stations on
 Sonos speakers and managing Sonos multiroom groups. It is configured entirely
 through the visual card editor; no extra scripts, helpers or YAML are needed.
 
+![Sonos Radio Card with station grid and control bar](docs/card.png)
+
+![Group speakers drawer with room toggles and volume sliders](docs/drawer.png)
+
 ## Features
 
 - **Station grid** – responsive tiles with station logo (radio icon fallback)
@@ -342,3 +346,7 @@ git commit -am "chore: release 0.2.0"
 git tag v0.2.0
 git push origin main v0.2.0
 ```
+
+## License
+
+[MIT](LICENSE)

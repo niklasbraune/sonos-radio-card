@@ -2,6 +2,7 @@
   "name": "sonos-radio-card",
   "version": "0.1.0",
   "description": "A custom Home Assistant Lovelace card for Sonos radio stations",
+  "license": "MIT",
   "private": true,
   "type": "module",
   "engines": {
